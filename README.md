@@ -11,6 +11,7 @@ You can use this to:
 - Optimize your tool schemas and descriptions for better model performance
 - Establish quality benchmarks for your MCP tools
 - Use simple synthetic tool definitions to see how good a model is at tool-calling
+- Chain together multiple tool calls (real or mocked), evaluating along the way
 
 # Design
 
@@ -23,9 +24,28 @@ of the model's decisions is quite important. The latency is a secondary concern
 of mine because there are some situations when I need to string together a bunch
 of tool calls and want to see how many I can cram into a unit of time.
 
-This doesn't get the model to call the tool. We are only measuring the model's decision.
-It's reading the MCP tool definition in your tool and using that with the model,
-just like when your AI client registers your tools with the model.
+In the basic test flow, this doesn't get the model to call the tool. We are only
+measuring the model's decision. It's reading the MCP tool definition in your tool
+and using that with the model, just like when your AI client registers your tools
+with the model.
+
+In the more advanced chained test flow, you have the option to actually call your
+tools. This allows you to perform evaluations of subsequent tool calls by nudging
+the model toward calling those tools.
+
+## Tool Signatures
+
+The primary purpose of this is to test the quality of your tool names, descriptions, and
+arguments. This is the data first registered with the model. The simple, non-chained
+test workflow can help you test this.
+
+## Mocked Tool Calls
+
+This is most useful in a chained tool call test flow. It's useful when you want to test
+the path a model follows through your toolset. You have the ability to mock one of your
+tool calls or actually call the tool (dealing with side-effects). The purpose of this
+is _not_ to test the tool itself, just to get the required information (the tool response)
+back into the model's context so it can influence subsequent tool call decisions.
 
 ## Installation
 
