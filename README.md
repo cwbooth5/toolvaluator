@@ -448,6 +448,85 @@ The evaluator provides the model with full tool context to prevent hallucination
 
 This prevents the model from hallucinating tool names or misunderstanding tool purposes. Each evaluation asks: "Given this specific tool and this query, should the tool be called and with what arguments?"
 
+### Chained Tool Calls (Advanced)
+
+**WARNING: This feature actually executes tools on your MCP server!**
+
+For testing multi-step workflows where one tool's output feeds into the next, use `ChainedEvaluator`:
+
+```python
+from toolvaluator import ChainedEvaluator, get_tool_schemas_sync
+from my_server import mcp
+
+tool_schemas = get_tool_schemas_sync(mcp)
+
+# Create chained evaluator
+chain = ChainedEvaluator(
+    tool_schemas=tool_schemas,
+    mcp_server=mcp,
+    model_name="gpt-4o-mini",
+    api_key="your-api-key"
+)
+
+# Define the chain - tools will be executed in sequence!
+chain.add_step(
+    initial_query="Calculate 15 * 23, then divide the result by 5",
+    expected_tool="calculate",
+    expected_arguments={"operation": "multiply", "a": 15, "b": 23}
+)
+
+chain.add_step(
+    expected_tool="calculate",
+    expected_arguments={"operation": "divide", "a": None, "b": 5}  # 'a' comes from step 1
+)
+
+# Execute and evaluate
+result = chain.evaluate()
+
+print(f"Overall score: {result['score']:.2f}")
+print(f"Steps completed: {result['num_steps']}")
+for step in result['step_results']:
+    print(f"  Step {step['step']}: {step['predicted_tool']} → {step['tool_result']}")
+```
+
+**How it works:**
+1. Model receives initial query
+2. Model decides which tool to call (step 1)
+3. **Tool is actually executed** on your MCP server
+4. Result is fed back to model as context
+5. Model decides next tool call (step 2)
+6. Process continues for all steps
+7. Each step is evaluated independently
+
+**Side Effects & Warnings:**
+
+**Tools are executed for real** - This is not a simulation!
+
+- **Data modification**: Tools may create, update, or delete data
+- **Network calls**: APIs may be called, emails sent, etc.
+- **Resource consumption**: Database queries, file operations, etc.
+- **Costs**: API calls to external services may incur charges
+- **Idempotency**: Running the chain multiple times may produce different results
+
+**Best practices:**
+- Use test/staging MCP servers, not production
+- Implement mock/test versions of tools with side effects
+- Use tools that are safe to execute multiple times
+- Log all tool executions for audit trails
+- Consider implementing dry-run mode in your tools
+
+**When to use:**
+- Testing multi-step agent workflows
+- Validating tool orchestration logic
+- Integration testing of tool chains
+- Debugging complex tool interactions
+
+**When NOT to use:**
+- Production data or services
+- Tools with irreversible side effects
+- Financial transactions or critical operations
+- Unless you fully understand the implications!
+
 ## Configuration Options
 
 ### `toolvaluator` CLI Options

@@ -344,6 +344,257 @@ def tool_call_metric(example: dspy.Example, pred, _trace=None) -> float:
 # ---------------------------------------------------------------------
 
 
+class ChainedEvaluator:
+    """
+    Evaluate chained tool calls where one tool's output feeds into the next.
+
+    **WARNING: This actually executes tools on your MCP server!**
+
+    This is useful for testing multi-step workflows where:
+    1. Model calls first tool with arguments
+    2. Tool is ACTUALLY EXECUTED
+    3. Result is fed back to model
+    4. Model calls second tool using the result
+    5. Process continues for all steps
+
+    Side effects:
+    - Tools are executed for real
+    - Data may be created/modified/deleted depending on tool behavior
+    - Network calls may be made
+    - Use with caution in production environments
+
+    Usage:
+        chain = ChainedEvaluator(
+            tool_schemas=tool_schemas,
+            mcp_server=mcp,
+            model_name="gpt-4o-mini",
+            api_key="your-key"
+        )
+
+        chain.add_step(
+            initial_query="What's the weather where I am?",
+            expected_tool="get_location",
+            expected_arguments={}
+        )
+
+        chain.add_step(
+            expected_tool="get_weather",
+            expected_arguments={"location": None}  # Will use result from step 1
+        )
+
+        result = chain.evaluate()
+    """
+
+    def __init__(
+        self,
+        tool_schemas: dict[str, Any],
+        mcp_server,
+        model_name: str,
+        api_key: str,
+        base_url: str | None = None,
+    ):
+        """
+        Initialize the chained evaluator.
+
+        Args:
+            tool_schemas: Dict mapping tool names to their definitions
+            mcp_server: FastMCP server instance (for executing tools)
+            model_name: Name of the model to evaluate
+            api_key: API key for the model
+            base_url: Optional base URL for OpenAI-compatible endpoints
+        """
+        self.tool_schemas = tool_schemas
+        self.mcp_server = mcp_server
+        self.model_name = model_name
+        self.api_key = api_key
+        self.base_url = base_url
+        self.steps: list[dict[str, Any]] = []
+        self.execution_history: list[dict[str, Any]] = []
+
+    def add_step(
+        self,
+        expected_tool: str,
+        expected_arguments: dict[str, Any] | None = None,
+        initial_query: str | None = None,
+    ) -> "ChainedEvaluator":
+        """
+        Add a step to the chain.
+
+        Args:
+            expected_tool: Name of tool that should be called in this step
+            expected_arguments: Expected arguments (None for wildcards)
+            initial_query: For first step only - the user's initial query
+
+        Returns:
+            Self for method chaining
+        """
+        if expected_tool not in self.tool_schemas:
+            raise ValueError(
+                f"Tool '{expected_tool}' not found in tool_schemas. "
+                f"Available: {', '.join(self.tool_schemas.keys())}"
+            )
+
+        self.steps.append({
+            "expected_tool": expected_tool,
+            "expected_arguments": expected_arguments or {},
+            "initial_query": initial_query,
+        })
+        return self
+
+    async def _execute_tool_call(
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> str:
+        """Execute a tool call on the MCP server and return the result."""
+        from fastmcp import Client
+
+        async with Client(self.mcp_server) as client:
+            result = await client.call_tool(tool_name, arguments=arguments)
+            # Extract text content from result
+            if hasattr(result, "content") and result.content:
+                content_item = result.content[0]
+                if hasattr(content_item, "text"):
+                    return content_item.text
+            return str(result)
+
+    def evaluate(self) -> dict[str, Any]:
+        """
+        Execute the chain and evaluate each step.
+
+        Returns:
+            Dict with overall score, per-step results, and execution history
+
+        Raises:
+            ValueError: If no steps defined or first step missing initial_query
+        """
+        import asyncio
+
+        if not self.steps:
+            raise ValueError("No steps defined. Use add_step() to add steps.")
+
+        if not self.steps[0].get("initial_query"):
+            raise ValueError("First step must have initial_query set")
+
+        # Configure DSPy
+        if self.base_url:
+            model_name = (
+                self.model_name
+                if "/" in self.model_name
+                else f"openai/{self.model_name}"
+            )
+            lm = dspy.LM(
+                model=model_name, api_key=self.api_key, base_url=self.base_url
+            )
+        else:
+            lm = dspy.LM(model=self.model_name, api_key=self.api_key)
+
+        dspy.configure(lm=lm)
+
+        tool_caller = GenericToolCallerModule()
+
+        # Track state
+        conversation_context = []
+        step_results = []
+        self.execution_history = []
+
+        # Start with initial query
+        current_query = self.steps[0]["initial_query"]
+
+        for i, step in enumerate(self.steps):
+            print(f"\n=== Step {i + 1}/{len(self.steps)} ===")
+            print(f"Query: {current_query}")
+
+            # Get tool metadata
+            expected_tool = step["expected_tool"]
+            tool_description = extract_tool_description(
+                self.tool_schemas[expected_tool]
+            )
+            tool_schema = extract_input_schema(self.tool_schemas[expected_tool])
+
+            # Ask model what to do
+            pred = tool_caller(
+                user_query=current_query,
+                tool_name=expected_tool,
+                tool_description=tool_description,
+                tool_schema=tool_schema,
+            )
+
+            # Check if model called expected tool
+            tool_correct = pred.tool_name == expected_tool
+            args_score, args_details = compare_arguments(
+                step["expected_arguments"], pred.arguments
+            )
+
+            print(f"Model called: {pred.tool_name}")
+            print(f"With arguments: {pred.arguments}")
+            print(f"Tool correct: {tool_correct}, Args score: {args_score:.2f}")
+
+            # Execute the tool if model got it right
+            tool_result = None
+            if tool_correct and pred.should_call:
+                print(f"Executing {pred.tool_name}...")
+                try:
+                    tool_result = asyncio.run(
+                        self._execute_tool_call(pred.tool_name, pred.arguments)
+                    )
+                    print(f"Result: {tool_result}")
+                except Exception as e:
+                    print(f"Tool execution failed: {e}")
+                    tool_result = f"Error: {e}"
+
+            # Record step
+            step_result = {
+                "step": i + 1,
+                "query": current_query,
+                "expected_tool": expected_tool,
+                "predicted_tool": pred.tool_name,
+                "tool_correct": tool_correct,
+                "expected_arguments": step["expected_arguments"],
+                "predicted_arguments": pred.arguments,
+                "args_score": args_score,
+                "args_details": args_details,
+                "tool_result": tool_result,
+            }
+            step_results.append(step_result)
+            self.execution_history.append(step_result)
+
+            # Update context for next step
+            if tool_result:
+                conversation_context.append({
+                    "query": current_query,
+                    "tool": pred.tool_name,
+                    "result": tool_result,
+                })
+
+                # Build query for next step using conversation history
+                if i + 1 < len(self.steps):
+                    context_str = "\n".join(
+                        [
+                            f"Called {item['tool']}({item.get('args', '')}) → {item['result']}"
+                            for item in conversation_context
+                        ]
+                    )
+                    current_query = (
+                        f"Previous context:\n{context_str}\n\n"
+                        f"Continue the task to accomplish the original goal."
+                    )
+
+        # Calculate overall score
+        tool_scores = [
+            1.0 if r["tool_correct"] else 0.0 for r in step_results
+        ]
+        args_scores = [r["args_score"] for r in step_results]
+        overall_score = (sum(tool_scores) + sum(args_scores)) / (
+            2 * len(step_results)
+        )
+
+        return {
+            "score": overall_score,
+            "step_results": step_results,
+            "execution_history": self.execution_history,
+            "num_steps": len(self.steps),
+        }
+
+
 class ExampleBuilder:
     """
     Helper class to reduce boilerplate when creating evaluation examples.

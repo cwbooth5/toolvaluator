@@ -321,7 +321,7 @@ def main():
     output_path.write_text(script_content)
     output_path.chmod(0o755)  # Make executable
 
-    print(f"\n✓ Generated evaluation script: {args.output}")
+    print(f"\nGenerated evaluation script: {args.output}")
     print("\nNext steps:")
     print(f"  1. Edit {args.output} and customize the evaluation examples")
     print("  2. Run the evaluation:")
