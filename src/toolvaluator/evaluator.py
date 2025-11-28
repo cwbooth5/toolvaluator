@@ -344,18 +344,125 @@ def tool_call_metric(example: dspy.Example, pred, _trace=None) -> float:
 # ---------------------------------------------------------------------
 
 
+class ExampleBuilder:
+    """
+    Helper class to reduce boilerplate when creating evaluation examples.
+
+    Usage:
+        builder = ExampleBuilder(tool_schemas)
+
+        # Add a positive example (should call the tool)
+        builder.add(
+            tool="search_docs",
+            query="Find our PTO policy",
+            should_call=True,
+            arguments={"query": "PTO policy"}
+        )
+
+        # Add a negative example (should NOT call the tool)
+        builder.add(
+            tool="search_docs",
+            query="What is 2+2?",
+            should_call=False
+        )
+
+        # Get all examples
+        examples = builder.examples
+    """
+
+    def __init__(self, tool_schemas: dict[str, Any]):
+        """
+        Initialize the example builder.
+
+        Args:
+            tool_schemas: Dict mapping tool names to their definitions
+        """
+        self.tool_schemas = tool_schemas
+        self.examples: list[dspy.Example] = []
+
+    def add(
+        self,
+        tool: str,
+        query: str,
+        should_call: bool = True,
+        arguments: dict[str, Any] | None = None,
+    ) -> "ExampleBuilder":
+        """
+        Add an evaluation example with minimal boilerplate.
+
+        Args:
+            tool: Name of the tool being tested
+            query: User's natural language query
+            should_call: Whether the tool should be called for this query
+            arguments: Expected arguments (None for "don't care", {} for "no args")
+
+        Returns:
+            Self for method chaining
+
+        Raises:
+            ValueError: If tool is not in tool_schemas
+        """
+        if tool not in self.tool_schemas:
+            raise ValueError(
+                f"Tool '{tool}' not found in tool_schemas. "
+                f"Available tools: {', '.join(self.tool_schemas.keys())}"
+            )
+
+        # Extract tool metadata
+        tool_description = extract_tool_description(self.tool_schemas[tool])
+        tool_schema = extract_input_schema(self.tool_schemas[tool])
+
+        # Set expected values based on should_call
+        expected_tool_name = tool if should_call else ""
+        expected_arguments = arguments if arguments is not None else {}
+
+        # Create and add the example
+        example = dspy.Example(
+            user_query=query,
+            tool_name=tool,
+            tool_description=tool_description,
+            tool_schema=tool_schema,
+            expected_should_call=should_call,
+            expected_tool_name=expected_tool_name,
+            expected_arguments=expected_arguments,
+        ).with_inputs("user_query", "tool_name", "tool_description", "tool_schema")
+
+        self.examples.append(example)
+        return self
+
+    def add_positive(
+        self, tool: str, query: str, arguments: dict[str, Any] | None = None
+    ) -> "ExampleBuilder":
+        """
+        Add a positive example (tool should be called).
+
+        Convenience method equivalent to add(tool, query, should_call=True, arguments).
+        """
+        return self.add(tool, query, should_call=True, arguments=arguments)
+
+    def add_negative(self, tool: str, query: str) -> "ExampleBuilder":
+        """
+        Add a negative example (tool should NOT be called).
+
+        Convenience method equivalent to add(tool, query, should_call=False).
+        """
+        return self.add(tool, query, should_call=False, arguments={})
+
+    def build(self) -> list[dspy.Example]:
+        """
+        Return the list of examples.
+
+        Alias for accessing .examples directly.
+        """
+        return self.examples
+
+
 def build_dataset(tool_schemas: dict[str, Any]) -> list[dspy.Example]:
     """
     Build a list of dspy.Example objects for evaluation.
 
+    This uses the ExampleBuilder helper to reduce boilerplate.
     You should customize this to match your real tools & queries.
-
-    Each example should have:
-      - user_query
-      - tool_schema: the *input* schema for the intended tool
-      - expected_should_call (bool)
-      - expected_tool_name (str)
-      - expected_arguments (dict)
 
     Args:
         tool_schemas: Dict mapping tool names to their definitions
@@ -363,144 +470,71 @@ def build_dataset(tool_schemas: dict[str, Any]) -> list[dspy.Example]:
     Returns:
         List of dspy.Example objects
     """
-
-    examples: list[dspy.Example] = []
+    builder = ExampleBuilder(tool_schemas)
 
     # Examples for "search_docs" tool
     if "search_docs" in tool_schemas:
-        tool_name = "search_docs"
-        tool_description = extract_tool_description(tool_schemas[tool_name])
-        tool_schema = extract_input_schema(tool_schemas[tool_name])
-
-        examples.append(
-            dspy.Example(
-                user_query="Find our PTO policy for new hires.",
-                tool_name=tool_name,
-                tool_description=tool_description,
-                tool_schema=tool_schema,
-                expected_should_call=True,
-                expected_tool_name=tool_name,
-                expected_arguments={"query": "PTO policy new hires"},
-            ).with_inputs("user_query", "tool_name", "tool_description", "tool_schema")
+        builder.add_positive(
+            tool="search_docs",
+            query="Find our PTO policy for new hires.",
+            arguments={"query": "PTO policy new hires"},
         )
-
-        examples.append(
-            dspy.Example(
-                user_query="What is 2 + 2?",
-                tool_name=tool_name,
-                tool_description=tool_description,
-                tool_schema=tool_schema,
-                expected_should_call=False,  # model should answer directly, not search
-                expected_tool_name="",
-                expected_arguments={},
-            ).with_inputs("user_query", "tool_name", "tool_description", "tool_schema")
+        builder.add_negative(
+            tool="search_docs",
+            query="What is 2 + 2?",  # Should answer directly, not search
         )
 
     # Examples for "get_weather" tool
     if "get_weather" in tool_schemas:
-        tool_name = "get_weather"
-        tool_description = extract_tool_description(tool_schemas[tool_name])
-        tool_schema = extract_input_schema(tool_schemas[tool_name])
-
-        examples.append(
-            dspy.Example(
-                user_query="What's the weather like in Tokyo?",
-                tool_name=tool_name,
-                tool_description=tool_description,
-                tool_schema=tool_schema,
-                expected_should_call=True,
-                expected_tool_name=tool_name,
-                expected_arguments={"location": "Tokyo", "units": "celsius"},
-            ).with_inputs("user_query", "tool_name", "tool_description", "tool_schema")
+        builder.add_positive(
+            tool="get_weather",
+            query="What's the weather like in Tokyo?",
+            arguments={"location": "Tokyo", "units": "celsius"},
         )
-
-        examples.append(
-            dspy.Example(
-                user_query="Get me the weather in New York in fahrenheit",
-                tool_name=tool_name,
-                tool_description=tool_description,
-                tool_schema=tool_schema,
-                expected_should_call=True,
-                expected_tool_name=tool_name,
-                expected_arguments={"location": "New York", "units": "fahrenheit"},
-            ).with_inputs("user_query", "tool_name", "tool_description", "tool_schema")
+        builder.add_positive(
+            tool="get_weather",
+            query="Get me the weather in New York in fahrenheit",
+            arguments={"location": "New York", "units": "fahrenheit"},
         )
 
     # Examples for "calculate" tool
     if "calculate" in tool_schemas:
-        tool_name = "calculate"
-        tool_description = extract_tool_description(tool_schemas[tool_name])
-        tool_schema = extract_input_schema(tool_schemas[tool_name])
-
-        examples.append(
-            dspy.Example(
-                user_query="What is 15 multiplied by 23?",
-                tool_name=tool_name,
-                tool_description=tool_description,
-                tool_schema=tool_schema,
-                expected_should_call=True,
-                expected_tool_name=tool_name,
-                expected_arguments={"operation": "multiply", "a": 15, "b": 23},
-            ).with_inputs("user_query", "tool_name", "tool_description", "tool_schema")
+        builder.add_positive(
+            tool="calculate",
+            query="What is 15 multiplied by 23?",
+            arguments={"operation": "multiply", "a": 15, "b": 23},
         )
-
-        examples.append(
-            dspy.Example(
-                user_query="Divide 100 by 4",
-                tool_name=tool_name,
-                tool_description=tool_description,
-                tool_schema=tool_schema,
-                expected_should_call=True,
-                expected_tool_name=tool_name,
-                expected_arguments={"operation": "divide", "a": 100, "b": 4},
-            ).with_inputs("user_query", "tool_name", "tool_description", "tool_schema")
+        builder.add_positive(
+            tool="calculate",
+            query="Divide 100 by 4",
+            arguments={"operation": "divide", "a": 100, "b": 4},
         )
 
     # Examples for "send_email" tool
     if "send_email" in tool_schemas:
-        tool_name = "send_email"
-        tool_description = extract_tool_description(tool_schemas[tool_name])
-        tool_schema = extract_input_schema(tool_schemas[tool_name])
-
-        examples.append(
-            dspy.Example(
-                user_query="Send an email to john@example.com with subject 'Meeting Tomorrow' and body 'Don't forget our 10am meeting'",
-                tool_name=tool_name,
-                tool_description=tool_description,
-                tool_schema=tool_schema,
-                expected_should_call=True,
-                expected_tool_name=tool_name,
-                expected_arguments={
-                    "to": "john@example.com",
-                    "subject": "Meeting Tomorrow",
-                    "body": "Don't forget our 10am meeting",
-                },
-            ).with_inputs("user_query", "tool_name", "tool_description", "tool_schema")
+        builder.add_positive(
+            tool="send_email",
+            query="Send an email to john@example.com with subject 'Meeting Tomorrow' and body 'Don't forget our 10am meeting'",
+            arguments={
+                "to": "john@example.com",
+                "subject": "Meeting Tomorrow",
+                "body": "Don't forget our 10am meeting",
+            },
         )
 
     # Examples for "create_task" tool
     if "create_task" in tool_schemas:
-        tool_name = "create_task"
-        tool_description = extract_tool_description(tool_schemas[tool_name])
-        tool_schema = extract_input_schema(tool_schemas[tool_name])
-
-        examples.append(
-            dspy.Example(
-                user_query="Create a high priority task called 'Fix login bug' due 2025-12-01",
-                tool_name=tool_name,
-                tool_description=tool_description,
-                tool_schema=tool_schema,
-                expected_should_call=True,
-                expected_tool_name=tool_name,
-                expected_arguments={
-                    "title": "Fix login bug",
-                    "priority": "high",
-                    "due_date": "2025-12-01",
-                },
-            ).with_inputs("user_query", "tool_name", "tool_description", "tool_schema")
+        builder.add_positive(
+            tool="create_task",
+            query="Create a high priority task called 'Fix login bug' due 2025-12-01",
+            arguments={
+                "title": "Fix login bug",
+                "priority": "high",
+                "due_date": "2025-12-01",
+            },
         )
 
-    return examples
+    return builder.examples
 
 
 # ---------------------------------------------------------------------

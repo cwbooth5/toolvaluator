@@ -1,6 +1,7 @@
 """Tests for the evaluator module."""
 
 from toolvaluator.evaluator import (
+    ExampleBuilder,
     compare_arguments,
     extract_input_schema,
     get_tool_schemas_sync,
@@ -184,3 +185,86 @@ def test_compare_arguments_mixed_wildcard_and_specific():
     score, details = compare_arguments(expected, predicted)
     assert score == 1.0
     assert details["mismatches"] == {}
+
+
+def test_example_builder_add_positive(test_mcp_server):
+    """Test ExampleBuilder.add_positive creates correct example."""
+    from toolvaluator import get_tool_schemas_sync
+
+    tool_schemas = get_tool_schemas_sync(test_mcp_server)
+    builder = ExampleBuilder(tool_schemas)
+
+    builder.add_positive(
+        tool="search_docs", query="Find documentation", arguments={"query": "test"}
+    )
+
+    assert len(builder.examples) == 1
+    example = builder.examples[0]
+    assert example.user_query == "Find documentation"
+    assert example.tool_name == "search_docs"
+    assert example.expected_should_call is True
+    assert example.expected_tool_name == "search_docs"
+    assert example.expected_arguments == {"query": "test"}
+
+
+def test_example_builder_add_negative(test_mcp_server):
+    """Test ExampleBuilder.add_negative creates correct example."""
+    from toolvaluator import get_tool_schemas_sync
+
+    tool_schemas = get_tool_schemas_sync(test_mcp_server)
+    builder = ExampleBuilder(tool_schemas)
+
+    builder.add_negative(tool="search_docs", query="What is 2+2?")
+
+    assert len(builder.examples) == 1
+    example = builder.examples[0]
+    assert example.user_query == "What is 2+2?"
+    assert example.expected_should_call is False
+    assert example.expected_tool_name == ""
+    assert example.expected_arguments == {}
+
+
+def test_example_builder_method_chaining(test_mcp_server):
+    """Test ExampleBuilder supports method chaining."""
+    from toolvaluator import get_tool_schemas_sync
+
+    tool_schemas = get_tool_schemas_sync(test_mcp_server)
+    builder = ExampleBuilder(tool_schemas)
+
+    builder.add_positive(
+        tool="search_docs", query="Query 1", arguments={"query": "test1"}
+    ).add_negative(tool="search_docs", query="Query 2").add_positive(
+        tool="get_weather", query="Query 3", arguments={"location": "Tokyo"}
+    )
+
+    assert len(builder.examples) == 3
+
+
+def test_example_builder_invalid_tool(test_mcp_server):
+    """Test ExampleBuilder raises error for invalid tool."""
+    from toolvaluator import get_tool_schemas_sync
+    import pytest
+
+    tool_schemas = get_tool_schemas_sync(test_mcp_server)
+    builder = ExampleBuilder(tool_schemas)
+
+    with pytest.raises(ValueError, match="Tool 'nonexistent' not found"):
+        builder.add_positive(
+            tool="nonexistent", query="test", arguments={"arg": "val"}
+        )
+
+
+def test_example_builder_build_method(test_mcp_server):
+    """Test ExampleBuilder.build() returns examples list."""
+    from toolvaluator import get_tool_schemas_sync
+
+    tool_schemas = get_tool_schemas_sync(test_mcp_server)
+    builder = ExampleBuilder(tool_schemas)
+
+    builder.add_positive(
+        tool="search_docs", query="test", arguments={"query": "test"}
+    )
+
+    examples = builder.build()
+    assert examples == builder.examples
+    assert len(examples) == 1

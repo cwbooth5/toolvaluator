@@ -8,6 +8,7 @@ use FastMCP tools by measuring correctness and latency.
 __version__ = "0.1.0"
 
 from .evaluator import (
+    ExampleBuilder,
     GenericToolCallerModule,
     build_dataset,
     compare_arguments,
@@ -20,6 +21,7 @@ from .evaluator import (
 
 __all__ = [
     "__version__",
+    "ExampleBuilder",
     "GenericToolCallerModule",
     "build_dataset",
     "compare_arguments",

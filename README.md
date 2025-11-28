@@ -190,6 +190,59 @@ result = eval_model(
 print(f"Score: {result['score']:.3f}")
 ```
 
+### Reducing Boilerplate with ExampleBuilder
+
+For even cleaner code, use the `ExampleBuilder` helper class to reduce boilerplate:
+
+```python
+from toolvaluator import ExampleBuilder, get_tool_schemas_sync, eval_model
+from my_server import mcp
+
+# Fetch tool schemas
+tool_schemas = get_tool_schemas_sync(mcp)
+
+# Create builder
+builder = ExampleBuilder(tool_schemas)
+
+# Add examples with minimal boilerplate
+builder.add_positive(
+    tool="search_docs",
+    query="Find our vacation policy",
+    arguments={"query": "vacation policy"}
+)
+
+builder.add_negative(
+    tool="search_docs",
+    query="What is 2+2?"  # Should answer directly
+)
+
+# Method chaining works too!
+builder.add_positive(
+    tool="get_weather",
+    query="Weather in Tokyo?",
+    arguments={"location": "Tokyo", "units": None}  # None = wildcard
+).add_positive(
+    tool="calculate",
+    query="What is 5 * 10?",
+    arguments={"operation": "multiply", "a": 5, "b": 10}
+)
+
+# Run evaluation
+result = eval_model(
+    model_name="gpt-4o-mini",
+    api_key="your-api-key",
+    dataset=builder.examples,
+    verbose=True,
+)
+```
+
+**Key benefits:**
+- **No manual schema extraction**: Automatically extracts tool_name, tool_description, and tool_schema
+- **Cleaner syntax**: Focus on query and expected arguments, not boilerplate
+- **Method chaining**: Fluently build test suites
+- **Built-in validation**: Raises errors if tool doesn't exist
+- **Convenience methods**: `add_positive()` and `add_negative()` for common cases
+
 ## Project Structure
 
 ```
