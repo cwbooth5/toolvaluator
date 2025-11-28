@@ -47,8 +47,14 @@ def main():
         "--server",
         type=str,
         default="server",
-        help="Python module containing your FastMCP server (default: 'server'). "
-        "The module should expose a FastMCP instance named 'mcp'.",
+        help="Python module containing your FastMCP server (default: 'server').",
+    )
+    parser.add_argument(
+        "--server-var",
+        type=str,
+        default="mcp",
+        help="Name of the FastMCP instance variable in the server module (default: 'mcp'). "
+        "For example, if your server has 'app = FastMCP(...)', use --server-var app",
     )
     parser.add_argument(
         "--verbose",
@@ -70,10 +76,10 @@ def main():
         )
         sys.exit(1)
 
-    # We need to use this so we can use parts of the FastMCP client lib.
+    # Import the FastMCP server
     try:
         server_module = importlib.import_module(args.server)
-        mcp = server_module.mcp
+        mcp = getattr(server_module, args.server_var)
     except ImportError as e:
         print(
             f"ERROR: Could not import server module '{args.server}': {e}",
@@ -86,11 +92,15 @@ def main():
         sys.exit(1)
     except AttributeError:
         print(
-            f"ERROR: Module '{args.server}' does not have an 'mcp' attribute.",
+            f"ERROR: Module '{args.server}' does not have a '{args.server_var}' attribute.",
             file=sys.stderr,
         )
         print(
-            "Your FastMCP server module should expose a FastMCP instance named 'mcp'.",
+            f"Your FastMCP server module should expose a FastMCP instance named '{args.server_var}'.",
+            file=sys.stderr,
+        )
+        print(
+            f"If your instance has a different name, use --server-var <name>",
             file=sys.stderr,
         )
         sys.exit(1)
