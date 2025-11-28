@@ -5,7 +5,7 @@ This package provides utilities to evaluate how well language models
 use FastMCP tools by measuring correctness and latency.
 """
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
 
 from .evaluator import (
     ChainedEvaluator,
