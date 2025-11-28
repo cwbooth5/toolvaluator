@@ -140,10 +140,47 @@ def test_compare_arguments_partial_match_with_extra():
     expected = {"arg1": "value1", "arg2": 42}
     predicted = {"arg1": "value1", "arg2": 99, "extra": "foo"}
     score, details = compare_arguments(expected, predicted)
-    
+
     # Base score: 1/2 = 0.5 (only arg1 matched)
     # Penalty: 1 extra key * 0.5 / 2 expected = 0.25
     # Final: 0.5 - 0.25 = 0.25
     assert score == 0.25
     assert "arg2" in details["mismatches"]
     assert details["extra_keys"] == ["extra"]
+
+
+def test_compare_arguments_wildcard_value():
+    """Test that None value acts as wildcard (don't care about value)."""
+    expected = {"arg1": "value1", "arg2": None}  # arg2 is wildcard
+    predicted = {"arg1": "value1", "arg2": "any_value_works"}
+    score, details = compare_arguments(expected, predicted)
+    assert score == 1.0
+    assert details["mismatches"] == {}
+
+
+def test_compare_arguments_wildcard_missing():
+    """Test that wildcard still fails if key is missing."""
+    expected = {"arg1": "value1", "arg2": None}  # arg2 is wildcard
+    predicted = {"arg1": "value1"}  # arg2 missing
+    score, details = compare_arguments(expected, predicted)
+    assert score == 0.5  # Only arg1 matched, arg2 missing
+    assert "arg2" in details["mismatches"]
+    assert details["mismatches"]["arg2"]["predicted"] is None
+
+
+def test_compare_arguments_all_wildcards():
+    """Test all wildcard values."""
+    expected = {"arg1": None, "arg2": None, "arg3": None}
+    predicted = {"arg1": "foo", "arg2": 42, "arg3": [1, 2, 3]}
+    score, details = compare_arguments(expected, predicted)
+    assert score == 1.0
+    assert details["mismatches"] == {}
+
+
+def test_compare_arguments_mixed_wildcard_and_specific():
+    """Test mix of wildcard and specific values."""
+    expected = {"arg1": "value1", "arg2": None, "arg3": 42}
+    predicted = {"arg1": "value1", "arg2": "any_value", "arg3": 42}
+    score, details = compare_arguments(expected, predicted)
+    assert score == 1.0
+    assert details["mismatches"] == {}

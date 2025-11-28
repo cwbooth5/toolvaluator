@@ -205,6 +205,7 @@ def compare_arguments(
             - None: Don't care about arguments (score 1.0)
             - {}: Expect NO arguments (fail if model provides any)
             - {...}: Expect specific arguments
+            - {"key": None}: Expect key to exist, don't care about value (wildcard)
         predicted: Predicted arguments dict
 
     Returns:
@@ -212,6 +213,7 @@ def compare_arguments(
 
     Scoring:
     - Each expected key that matches exactly: +1 point
+    - Each expected key with None value (wildcard) that exists: +1 point
     - Each missing expected key: 0 points
     - Each extra unexpected key: -0.5 points (capped at 0)
     - Empty expected {} but predicted has args: 0.0
@@ -247,7 +249,10 @@ def compare_arguments(
             mismatches[key] = {"expected": expected_val, "predicted": None}
             continue
         pred_val = predicted[key]
-        if pred_val == expected_val:
+        # If expected value is None, it's a wildcard (any value is acceptable)
+        if expected_val is None:
+            correct += 1  # Key exists, don't care about value
+        elif pred_val == expected_val:
             correct += 1
         else:
             mismatches[key] = {"expected": expected_val, "predicted": pred_val}
