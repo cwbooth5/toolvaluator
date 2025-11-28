@@ -13,6 +13,7 @@ from .evaluator import (
     compare_arguments,
     eval_model,
     extract_input_schema,
+    extract_tool_description,
     get_tool_schemas_sync,
     tool_call_metric,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "compare_arguments",
     "eval_model",
     "extract_input_schema",
+    "extract_tool_description",
     "get_tool_schemas_sync",
     "tool_call_metric",
 ]

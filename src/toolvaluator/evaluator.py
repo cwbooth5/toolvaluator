@@ -91,6 +91,22 @@ def extract_input_schema(tool_def: Any) -> dict[str, Any]:
         )
 
 
+def extract_tool_description(tool_def: Any) -> str:
+    """
+    Extract the tool description from the tool definition.
+
+    Args:
+        tool_def: A tool definition (dict or object)
+
+    Returns:
+        The tool description string
+    """
+    if isinstance(tool_def, dict):
+        return tool_def.get("description", "")
+    else:
+        return getattr(tool_def, "description", "")
+
+
 # ---------------------------------------------------------------------
 # 2. DSPy Signature and Module for generic tool-calling
 # ---------------------------------------------------------------------
@@ -98,24 +114,24 @@ def extract_input_schema(tool_def: Any) -> dict[str, Any]:
 
 class GenericToolCaller(dspy.Signature):
     """
-    Decide whether to call the given tool for this user query,
-    and if so, fill in the tool name and arguments.
+    Evaluate whether the model correctly uses a specific tool for the given query.
 
-    The tool schema is passed as a JSON string so the model can "read"
-    it and construct proper arguments.
+    Given a user query and a tool's name, description, and parameter schema,
+    determine if the tool should be called and what arguments should be passed.
     """
 
-    user_query: str = dspy.InputField()
-    tool_schema_json: str = dspy.InputField()
+    user_query: str = dspy.InputField(desc="The user's natural language query")
+    tool_name: str = dspy.InputField(desc="The name of the tool being evaluated")
+    tool_description: str = dspy.InputField(desc="Description of what the tool does")
+    tool_schema_json: str = dspy.InputField(
+        desc="JSON schema of the tool's input parameters"
+    )
 
     should_call: bool = dspy.OutputField(
-        desc="True if the tool should be used; False if the model should answer directly."
-    )
-    tool_name: str = dspy.OutputField(
-        desc="The name of the tool to call, or empty string if should_call is false."
+        desc="True if this tool should be used for the query; False if the model should answer directly without calling any tool."
     )
     arguments_json: str = dspy.OutputField(
-        desc="JSON object of arguments that match the tool's parameters schema."
+        desc="JSON object of arguments to pass to the tool (matching the schema). Empty {} if should_call is False."
     )
 
 
@@ -128,17 +144,25 @@ class GenericToolCallerModule(dspy.Module):
         super().__init__()
         self.predict = dspy.Predict(GenericToolCaller)
 
-    def forward(self, user_query: str, tool_schema: dict[str, Any]):
+    def forward(
+        self,
+        user_query: str,
+        tool_name: str,
+        tool_description: str,
+        tool_schema: dict[str, Any],
+    ):
         """
         Make a prediction for whether and how to call a tool.
 
         Args:
             user_query: The user's query string
-            tool_schema: The tool's input schema as a dict
+            tool_name: Name of the tool being evaluated
+            tool_description: Description of what the tool does
+            tool_schema: The tool's input parameter schema as a dict
 
         Returns:
-            A prediction object with should_call, tool_name, arguments,
-            and latency_ms attributes
+            A prediction object with should_call, arguments,
+            and latency_ms attributes. Also adds tool_name for compatibility.
         """
         # Tool schema comes in as a dict from FastMCP; we serialize for the LM
         schema_json = json.dumps(tool_schema, ensure_ascii=False)
@@ -146,6 +170,8 @@ class GenericToolCallerModule(dspy.Module):
         t0 = time.perf_counter()
         pred = self.predict(
             user_query=user_query,
+            tool_name=tool_name,
+            tool_description=tool_description,
             tool_schema_json=schema_json,
         )
         t1 = time.perf_counter()
@@ -158,6 +184,8 @@ class GenericToolCallerModule(dspy.Module):
             args = {}
         pred.arguments = args
         pred.latency_ms = latency_ms
+        # Add tool_name to pred for compatibility with metric function
+        pred.tool_name = tool_name
         return pred
 
 
@@ -335,110 +363,136 @@ def build_dataset(tool_schemas: dict[str, Any]) -> list[dspy.Example]:
 
     # Examples for "search_docs" tool
     if "search_docs" in tool_schemas:
-        search_docs_schema = extract_input_schema(tool_schemas["search_docs"])
+        tool_name = "search_docs"
+        tool_description = extract_tool_description(tool_schemas[tool_name])
+        tool_schema = extract_input_schema(tool_schemas[tool_name])
 
         examples.append(
             dspy.Example(
                 user_query="Find our PTO policy for new hires.",
-                tool_schema=search_docs_schema,
+                tool_name=tool_name,
+                tool_description=tool_description,
+                tool_schema=tool_schema,
                 expected_should_call=True,
-                expected_tool_name="search_docs",
+                expected_tool_name=tool_name,
                 expected_arguments={"query": "PTO policy new hires"},
-            ).with_inputs("user_query", "tool_schema")
+            ).with_inputs("user_query", "tool_name", "tool_description", "tool_schema")
         )
 
         examples.append(
             dspy.Example(
                 user_query="What is 2 + 2?",
-                tool_schema=search_docs_schema,
+                tool_name=tool_name,
+                tool_description=tool_description,
+                tool_schema=tool_schema,
                 expected_should_call=False,  # model should answer directly, not search
                 expected_tool_name="",
                 expected_arguments={},
-            ).with_inputs("user_query", "tool_schema")
+            ).with_inputs("user_query", "tool_name", "tool_description", "tool_schema")
         )
 
     # Examples for "get_weather" tool
     if "get_weather" in tool_schemas:
-        weather_schema = extract_input_schema(tool_schemas["get_weather"])
+        tool_name = "get_weather"
+        tool_description = extract_tool_description(tool_schemas[tool_name])
+        tool_schema = extract_input_schema(tool_schemas[tool_name])
 
         examples.append(
             dspy.Example(
                 user_query="What's the weather like in Tokyo?",
-                tool_schema=weather_schema,
+                tool_name=tool_name,
+                tool_description=tool_description,
+                tool_schema=tool_schema,
                 expected_should_call=True,
-                expected_tool_name="get_weather",
+                expected_tool_name=tool_name,
                 expected_arguments={"location": "Tokyo", "units": "celsius"},
-            ).with_inputs("user_query", "tool_schema")
+            ).with_inputs("user_query", "tool_name", "tool_description", "tool_schema")
         )
 
         examples.append(
             dspy.Example(
                 user_query="Get me the weather in New York in fahrenheit",
-                tool_schema=weather_schema,
+                tool_name=tool_name,
+                tool_description=tool_description,
+                tool_schema=tool_schema,
                 expected_should_call=True,
-                expected_tool_name="get_weather",
+                expected_tool_name=tool_name,
                 expected_arguments={"location": "New York", "units": "fahrenheit"},
-            ).with_inputs("user_query", "tool_schema")
+            ).with_inputs("user_query", "tool_name", "tool_description", "tool_schema")
         )
 
     # Examples for "calculate" tool
     if "calculate" in tool_schemas:
-        calc_schema = extract_input_schema(tool_schemas["calculate"])
+        tool_name = "calculate"
+        tool_description = extract_tool_description(tool_schemas[tool_name])
+        tool_schema = extract_input_schema(tool_schemas[tool_name])
 
         examples.append(
             dspy.Example(
                 user_query="What is 15 multiplied by 23?",
-                tool_schema=calc_schema,
+                tool_name=tool_name,
+                tool_description=tool_description,
+                tool_schema=tool_schema,
                 expected_should_call=True,
-                expected_tool_name="calculate",
+                expected_tool_name=tool_name,
                 expected_arguments={"operation": "multiply", "a": 15, "b": 23},
-            ).with_inputs("user_query", "tool_schema")
+            ).with_inputs("user_query", "tool_name", "tool_description", "tool_schema")
         )
 
         examples.append(
             dspy.Example(
                 user_query="Divide 100 by 4",
-                tool_schema=calc_schema,
+                tool_name=tool_name,
+                tool_description=tool_description,
+                tool_schema=tool_schema,
                 expected_should_call=True,
-                expected_tool_name="calculate",
+                expected_tool_name=tool_name,
                 expected_arguments={"operation": "divide", "a": 100, "b": 4},
-            ).with_inputs("user_query", "tool_schema")
+            ).with_inputs("user_query", "tool_name", "tool_description", "tool_schema")
         )
 
     # Examples for "send_email" tool
     if "send_email" in tool_schemas:
-        email_schema = extract_input_schema(tool_schemas["send_email"])
+        tool_name = "send_email"
+        tool_description = extract_tool_description(tool_schemas[tool_name])
+        tool_schema = extract_input_schema(tool_schemas[tool_name])
 
         examples.append(
             dspy.Example(
                 user_query="Send an email to john@example.com with subject 'Meeting Tomorrow' and body 'Don't forget our 10am meeting'",
-                tool_schema=email_schema,
+                tool_name=tool_name,
+                tool_description=tool_description,
+                tool_schema=tool_schema,
                 expected_should_call=True,
-                expected_tool_name="send_email",
+                expected_tool_name=tool_name,
                 expected_arguments={
                     "to": "john@example.com",
                     "subject": "Meeting Tomorrow",
                     "body": "Don't forget our 10am meeting",
                 },
-            ).with_inputs("user_query", "tool_schema")
+            ).with_inputs("user_query", "tool_name", "tool_description", "tool_schema")
         )
 
     # Examples for "create_task" tool
     if "create_task" in tool_schemas:
-        task_schema = extract_input_schema(tool_schemas["create_task"])
+        tool_name = "create_task"
+        tool_description = extract_tool_description(tool_schemas[tool_name])
+        tool_schema = extract_input_schema(tool_schemas[tool_name])
 
         examples.append(
             dspy.Example(
                 user_query="Create a high priority task called 'Fix login bug' due 2025-12-01",
-                tool_schema=task_schema,
+                tool_name=tool_name,
+                tool_description=tool_description,
+                tool_schema=tool_schema,
                 expected_should_call=True,
-                expected_tool_name="create_task",
+                expected_tool_name=tool_name,
                 expected_arguments={
                     "title": "Fix login bug",
                     "priority": "high",
                     "due_date": "2025-12-01",
                 },
-            ).with_inputs("user_query", "tool_schema")
+            ).with_inputs("user_query", "tool_name", "tool_description", "tool_schema")
         )
 
     return examples
@@ -504,6 +558,8 @@ def eval_model(
     for i, example in enumerate(dataset, 1):
         pred = tool_caller(
             user_query=example.user_query,
+            tool_name=example.tool_name,
+            tool_description=example.tool_description,
             tool_schema=example.tool_schema,
         )
         predictions.append(pred)

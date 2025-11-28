@@ -31,7 +31,7 @@ import os
 import sys
 
 import dspy
-from toolvaluator import eval_model, extract_input_schema, get_tool_schemas_sync
+from toolvaluator import eval_model, extract_input_schema, extract_tool_description, get_tool_schemas_sync
 
 # Import your MCP server
 from {server_module} import {server_var}
@@ -56,31 +56,37 @@ def build_evaluation_dataset(tool_schemas):
 
     # Example format (uncomment and customize):
     # if "your_tool_name" in tool_schemas:
-    #     schema = extract_input_schema(tool_schemas["your_tool_name"])
+    #     tool_name = "your_tool_name"
+    #     tool_description = extract_tool_description(tool_schemas[tool_name])
+    #     tool_schema = extract_input_schema(tool_schemas[tool_name])
     #
     #     # Positive example - should use the tool
     #     examples.append(
     #         dspy.Example(
     #             user_query="Natural language query that should trigger this tool",
-    #             tool_schema=schema,  # Auto-extracted from your MCP server
+    #             tool_name=tool_name,  # Name of the tool
+    #             tool_description=tool_description,  # What the tool does
+    #             tool_schema=tool_schema,  # Parameter schema
     #             expected_should_call=True,  # Should the model call this tool?
-    #             expected_tool_name="your_tool_name",  # Which tool should be called?
+    #             expected_tool_name=tool_name,  # Which tool should be called?
     #             expected_arguments={{  # What arguments should be extracted?
     #                 "arg1": "expected_value1",
     #                 "arg2": 123,
     #             }},
-    #         ).with_inputs("user_query", "tool_schema")
+    #         ).with_inputs("user_query", "tool_name", "tool_description", "tool_schema")
     #     )
     #
     #     # Negative example - should NOT use the tool
     #     examples.append(
     #         dspy.Example(
     #             user_query="A query that doesn't need this tool",
-    #             tool_schema=schema,
+    #             tool_name=tool_name,
+    #             tool_description=tool_description,
+    #             tool_schema=tool_schema,
     #             expected_should_call=False,  # Model should answer directly
     #             expected_tool_name="",
     #             expected_arguments={{}},
-    #         ).with_inputs("user_query", "tool_schema")
+    #         ).with_inputs("user_query", "tool_name", "tool_description", "tool_schema")
     #     )
 
     # TODO: Customize these examples for your tools!
@@ -192,31 +198,37 @@ def generate_tool_examples(tool_names, indent="    "):
         example = f'''
 {indent}# Example for '{tool_name}' tool
 {indent}if "{tool_name}" in tool_schemas:
-{indent}    schema = extract_input_schema(tool_schemas["{tool_name}"])
+{indent}    tool_name = "{tool_name}"
+{indent}    tool_description = extract_tool_description(tool_schemas[tool_name])
+{indent}    tool_schema = extract_input_schema(tool_schemas[tool_name])
 {indent}
 {indent}    # TODO: Customize this example for your tool
 {indent}    examples.append(
 {indent}        dspy.Example(
 {indent}            user_query="Your test query that should use {tool_name}",
-{indent}            tool_schema=schema,
+{indent}            tool_name=tool_name,
+{indent}            tool_description=tool_description,
+{indent}            tool_schema=tool_schema,
 {indent}            expected_should_call=True,
-{indent}            expected_tool_name="{tool_name}",
+{indent}            expected_tool_name=tool_name,
 {indent}            expected_arguments={{
 {indent}                # TODO: Add expected argument names and values
 {indent}                # "arg_name": "expected_value",
 {indent}            }},
-{indent}        ).with_inputs("user_query", "tool_schema")
+{indent}        ).with_inputs("user_query", "tool_name", "tool_description", "tool_schema")
 {indent}    )
 {indent}
 {indent}    # Negative test case (should NOT use the tool)
 {indent}    examples.append(
 {indent}        dspy.Example(
 {indent}            user_query="A question that doesn't need {tool_name}",
-{indent}            tool_schema=schema,
+{indent}            tool_name=tool_name,
+{indent}            tool_description=tool_description,
+{indent}            tool_schema=tool_schema,
 {indent}            expected_should_call=False,
 {indent}            expected_tool_name="",
 {indent}            expected_arguments={{}},
-{indent}        ).with_inputs("user_query", "tool_schema")
+{indent}        ).with_inputs("user_query", "tool_name", "tool_description", "tool_schema")
 {indent}    )
 '''
         examples.append(example)
