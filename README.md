@@ -10,6 +10,7 @@ You can use this to:
 - Compare different models to find which works best with your tools
 - Optimize your tool schemas and descriptions for better model performance
 - Establish quality benchmarks for your MCP tools
+- Use simple synthetic tool definitions to see how good a model is at tool-calling
 
 # Design
 
@@ -129,11 +130,13 @@ python eval_my_tools.py --model gpt-4o --min-score 0.85
 ```python
 dspy.Example(
     user_query="Find the company vacation policy",
+    tool_name="search_docs",
+    tool_description="Search through company documentation",
     tool_schema=schema,
     expected_should_call=True,
     expected_tool_name="search_docs",
     expected_arguments={"query": "vacation policy"},
-).with_inputs("user_query", "tool_schema")
+).with_inputs("user_query", "tool_name", "tool_description", "tool_schema")
 ```
 
 Each example is scored 0-1 across these three dimensions, and the overall score is the average.
@@ -143,7 +146,13 @@ Each example is scored 0-1 across these three dimensions, and the overall score 
 You can also use toolvaluator programmatically in your own scripts:
 
 ```python
-from toolvaluator import build_dataset, eval_model, get_tool_schemas_sync, extract_input_schema
+from toolvaluator import (
+    build_dataset,
+    eval_model,
+    get_tool_schemas_sync,
+    extract_input_schema,
+    extract_tool_description
+)
 import dspy
 from my_server import mcp
 
@@ -153,15 +162,20 @@ tool_schemas = get_tool_schemas_sync(mcp)
 # Create custom evaluation examples
 examples = []
 if "my_tool" in tool_schemas:
-    schema = extract_input_schema(tool_schemas["my_tool"])
+    tool_name = "my_tool"
+    tool_description = extract_tool_description(tool_schemas[tool_name])
+    tool_schema = extract_input_schema(tool_schemas[tool_name])
+
     examples.append(
         dspy.Example(
             user_query="Use my tool to process ABC",
-            tool_schema=schema,
+            tool_name=tool_name,
+            tool_description=tool_description,
+            tool_schema=tool_schema,
             expected_should_call=True,
-            expected_tool_name="my_tool",
+            expected_tool_name=tool_name,
             expected_arguments={"input": "ABC"},
-        ).with_inputs("user_query", "tool_schema")
+        ).with_inputs("user_query", "tool_name", "tool_description", "tool_schema")
     )
 
 # Run evaluation
@@ -298,6 +312,88 @@ The test server includes these tools:
    - Tool name correctness (binary: did it pick the right tool?)
    - Argument correctness (fraction: how many arguments matched?)
 5. **Metrics**: Reports overall correctness score (0-1) and latency statistics (mean, p50, p95, max)
+
+## Advanced Features
+
+### Wildcard Argument Values
+
+You can use `None` as a wildcard value in `expected_arguments` to indicate that a specific argument **must exist** but you **don't care about its value**. This is useful when:
+- You want to verify the model extracts a parameter but the exact value varies
+- Testing argument presence without caring about content
+- The value is dynamic (timestamps, IDs, generated text, etc.)
+
+**Examples:**
+
+```python
+# Exact value checking (strict)
+expected_arguments = {
+    "location": "Tokyo",
+    "units": "celsius"
+}
+# Model must return exactly: location="Tokyo", units="celsius"
+
+# Wildcard value checking (flexible)
+expected_arguments = {
+    "location": None,      # Any location is acceptable
+    "units": "celsius"     # Must be exactly "celsius"
+}
+# Model can return: location="Tokyo" ✓, location="Paris" ✓, etc.
+
+# Mixed approach
+expected_arguments = {
+    "to": None,            # Any email address
+    "subject": "Meeting",  # Must be exactly "Meeting"
+    "body": None          # Any body text
+}
+```
+
+**Important distinctions:**
+- `expected_arguments=None` → Don't care about any arguments at all (score 1.0)
+- `expected_arguments={}` → Expect NO arguments (score 0.0 if model provides any)
+- `expected_arguments={"key": None}` → Expect "key" to exist with any value
+
+### Enhanced Argument Scoring
+
+The argument comparison uses sophisticated scoring that:
+
+1. **Exact matches**: Each correctly matched argument contributes `1/n` to the score (where n = number of expected arguments)
+2. **Wildcards**: Arguments with `None` values count as matched if the key exists
+3. **Missing keys**: Arguments that should exist but don't contribute `0/n` to the score
+4. **Extra keys penalty**: Unexpected arguments incur a `-0.5/n` penalty per extra key
+5. **Final score**: `max(0.0, base_score - extra_penalty)`
+
+**Examples:**
+
+```python
+# Perfect match
+expected = {"arg1": "val1", "arg2": 42}
+predicted = {"arg1": "val1", "arg2": 42}
+# Score: 1.0
+
+# Partial match
+expected = {"arg1": "val1", "arg2": 42}
+predicted = {"arg1": "val1", "arg2": 99}
+# Score: 0.5 (only arg1 matched)
+
+# Extra arguments penalty
+expected = {"arg1": "val1", "arg2": 42}
+predicted = {"arg1": "val1", "arg2": 42, "extra1": "foo", "extra2": "bar"}
+# Base: 2/2 = 1.0, Penalty: (2 * 0.5) / 2 = 0.5, Final: 0.5
+
+# Empty dict means "no arguments expected"
+expected = {}
+predicted = {"arg1": "val1"}
+# Score: 0.0 (model should not have provided arguments)
+```
+
+### Tool Context Awareness
+
+The evaluator provides the model with full tool context to prevent hallucination:
+- **Tool name**: The exact name of the tool being evaluated
+- **Tool description**: What the tool does
+- **Tool schema**: Parameter definitions and types
+
+This prevents the model from hallucinating tool names or misunderstanding tool purposes. Each evaluation asks: "Given this specific tool and this query, should the tool be called and with what arguments?"
 
 ## Configuration Options
 
