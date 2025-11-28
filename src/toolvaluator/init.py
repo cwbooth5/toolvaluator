@@ -6,10 +6,8 @@ for their specific MCP tools and run standalone or in CI pipelines.
 """
 
 import argparse
-import os
 import sys
 from pathlib import Path
-
 
 EVAL_SCRIPT_TEMPLATE = '''#!/usr/bin/env python
 """
@@ -240,6 +238,7 @@ def detect_tools_from_server(server_module, server_var):
     """Try to detect tool names from the server module."""
     try:
         import importlib
+
         from toolvaluator import get_tool_schemas_sync
 
         mod = importlib.import_module(server_module)
@@ -323,11 +322,11 @@ def main():
     output_path.chmod(0o755)  # Make executable
 
     print(f"\n✓ Generated evaluation script: {args.output}")
-    print(f"\nNext steps:")
+    print("\nNext steps:")
     print(f"  1. Edit {args.output} and customize the evaluation examples")
-    print(f"  2. Run the evaluation:")
+    print("  2. Run the evaluation:")
     print(f"     python {args.output} --model gpt-4o-mini --verbose")
-    print(f"  3. Use in CI/CD with --min-score:")
+    print("  3. Use in CI/CD with --min-score:")
     print(f"     python {args.output} --model gpt-4o --min-score 0.85")
 
 

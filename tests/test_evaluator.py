@@ -126,7 +126,7 @@ def test_compare_arguments_with_extra_keys():
     expected = {"arg1": "value1", "arg2": 42}
     predicted = {"arg1": "value1", "arg2": 42, "extra1": "foo", "extra2": "bar"}
     score, details = compare_arguments(expected, predicted)
-    
+
     # Base score: 2/2 = 1.0
     # Penalty: 2 extra keys * 0.5 / 2 expected = 0.5
     # Final: 1.0 - 0.5 = 0.5

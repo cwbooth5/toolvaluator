@@ -100,7 +100,7 @@ def main():
             file=sys.stderr,
         )
         print(
-            f"If your instance has a different name, use --server-var <name>",
+            "If your instance has a different name, use --server-var <name>",
             file=sys.stderr,
         )
         sys.exit(1)
