@@ -174,24 +174,46 @@ def compare_arguments(
 
     Args:
         expected: Expected arguments dict (or None)
+            - None: Don't care about arguments (score 1.0)
+            - {}: Expect NO arguments (fail if model provides any)
+            - {...}: Expect specific arguments
         predicted: Predicted arguments dict
 
     Returns:
         Tuple of (score, details) where score is in [0,1]
 
-    Simple version: fraction of expected keys that match exactly.
-    - If expected is None or empty, treat as full score (1.0).
+    Scoring:
+    - Each expected key that matches exactly: +1 point
+    - Each missing expected key: 0 points
+    - Each extra unexpected key: -0.5 points (capped at 0)
+    - Empty expected {} but predicted has args: 0.0
     """
-    if not expected:
+    # None means "don't care about arguments"
+    if expected is None:
         return 1.0, {"reason": "no_expected_args_specified"}
+
+    # Empty dict means "expect NO arguments"
+    if not expected and predicted:
+        return 0.0, {
+            "error": "expected_no_args_but_got_some",
+            "unexpected_keys": list(predicted.keys()),
+            "unexpected_args": predicted,
+        }
+
+    # Empty expected and empty predicted = perfect
+    if not expected and not predicted:
+        return 1.0, {"reason": "both_empty"}
 
     if not isinstance(predicted, dict):
         return 0.0, {"error": "predicted_arguments_not_dict", "predicted": predicted}
 
-    total = len(expected)
+    # Count matches and mismatches
+    total_expected = len(expected)
     correct = 0
     mismatches = {}
+    extra_keys = []
 
+    # Check expected keys
     for key, expected_val in expected.items():
         if key not in predicted:
             mismatches[key] = {"expected": expected_val, "predicted": None}
@@ -202,8 +224,30 @@ def compare_arguments(
         else:
             mismatches[key] = {"expected": expected_val, "predicted": pred_val}
 
-    score = correct / total if total > 0 else 1.0
-    return score, {"mismatches": mismatches}
+    # Check for extra keys in predicted
+    for key in predicted:
+        if key not in expected:
+            extra_keys.append(key)
+
+    # Calculate score
+    if total_expected == 0:
+        # No expected args, but we already handled empty case above
+        score = 1.0
+    else:
+        # Base score: fraction of expected keys that matched
+        base_score = correct / total_expected
+
+        # Penalty for extra keys: -0.5 points per extra key (relative to expected count)
+        # This prevents score from going negative but penalizes extra arguments
+        extra_penalty = (len(extra_keys) * 0.5) / total_expected
+        score = max(0.0, base_score - extra_penalty)
+
+    details = {"mismatches": mismatches}
+    if extra_keys:
+        details["extra_keys"] = extra_keys
+        details["extra_args"] = {k: predicted[k] for k in extra_keys}
+
+    return score, details
 
 
 def tool_call_metric(example: dspy.Example, pred, _trace=None) -> float:
@@ -495,13 +539,26 @@ def eval_model(
             print(f"      - Should call: {dbg.get('should_call_score', 'N/A'):.3f}")
             print(f"      - Tool name: {dbg.get('tool_name_score', 'N/A'):.3f}")
             print(f"      - Arguments: {dbg.get('arg_score', 'N/A'):.3f}")
-            if dbg.get("arg_details", {}).get("mismatches"):
+
+            arg_details = dbg.get("arg_details", {})
+
+            if arg_details.get("mismatches"):
                 print()
                 print("    Argument mismatches:")
-                for key, details in dbg["arg_details"]["mismatches"].items():
+                for key, details in arg_details["mismatches"].items():
                     print(
                         f"      - {key}: expected={details['expected']}, got={details['predicted']}"
                     )
+
+            if arg_details.get("extra_keys"):
+                print()
+                print("    Extra unexpected arguments:")
+                for key in arg_details["extra_keys"]:
+                    print(f"      - {key}: {arg_details['extra_args'][key]}")
+
+            if arg_details.get("error"):
+                print()
+                print(f"    Error: {arg_details['error']}")
             print()
             print(f"    Latency: {lat:.1f}ms" if lat else "    Latency: N/A")
             print()

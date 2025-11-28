@@ -61,13 +61,33 @@ def test_compare_arguments_missing_key():
     assert details["mismatches"]["arg2"]["predicted"] is None
 
 
-def test_compare_arguments_no_expected():
-    """Test comparing when no expected arguments."""
+def test_compare_arguments_none_expected():
+    """Test comparing when expected is None (don't care about args)."""
     expected = None
     predicted = {"arg1": "value1"}
     score, details = compare_arguments(expected, predicted)
     assert score == 1.0
     assert details["reason"] == "no_expected_args_specified"
+
+
+def test_compare_arguments_empty_expected_empty_predicted():
+    """Test comparing when both expected and predicted are empty."""
+    expected = {}
+    predicted = {}
+    score, details = compare_arguments(expected, predicted)
+    assert score == 1.0
+    assert details["reason"] == "both_empty"
+
+
+def test_compare_arguments_empty_expected_but_predicted_has_args():
+    """Test that empty expected {} fails when model provides arguments."""
+    expected = {}
+    predicted = {"arg1": "value1", "arg2": "value2"}
+    score, details = compare_arguments(expected, predicted)
+    assert score == 0.0
+    assert details["error"] == "expected_no_args_but_got_some"
+    assert "arg1" in details["unexpected_keys"]
+    assert "arg2" in details["unexpected_keys"]
 
 
 def test_compare_arguments_invalid_predicted():
@@ -99,3 +119,31 @@ def test_tool_schemas_have_required_fields(test_mcp_server):
             assert "name" in tool_def or hasattr(tool_def, "name")
         else:
             assert hasattr(tool_def, "name")
+
+
+def test_compare_arguments_with_extra_keys():
+    """Test that extra keys in predicted are penalized."""
+    expected = {"arg1": "value1", "arg2": 42}
+    predicted = {"arg1": "value1", "arg2": 42, "extra1": "foo", "extra2": "bar"}
+    score, details = compare_arguments(expected, predicted)
+    
+    # Base score: 2/2 = 1.0
+    # Penalty: 2 extra keys * 0.5 / 2 expected = 0.5
+    # Final: 1.0 - 0.5 = 0.5
+    assert score == 0.5
+    assert details["extra_keys"] == ["extra1", "extra2"]
+    assert details["extra_args"] == {"extra1": "foo", "extra2": "bar"}
+
+
+def test_compare_arguments_partial_match_with_extra():
+    """Test partial match with extra keys."""
+    expected = {"arg1": "value1", "arg2": 42}
+    predicted = {"arg1": "value1", "arg2": 99, "extra": "foo"}
+    score, details = compare_arguments(expected, predicted)
+    
+    # Base score: 1/2 = 0.5 (only arg1 matched)
+    # Penalty: 1 extra key * 0.5 / 2 expected = 0.25
+    # Final: 0.5 - 0.25 = 0.25
+    assert score == 0.25
+    assert "arg2" in details["mismatches"]
+    assert details["extra_keys"] == ["extra"]
