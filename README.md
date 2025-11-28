@@ -99,26 +99,78 @@ toolvaluator --server my_server --model llama-3.1 --base-url http://localhost:12
 toolvaluator --server my_server --min-score 0.85
 ```
 
-### 3. Customize Your Evaluation Dataset
+### 3. Create Custom Evaluation Scripts (Recommended)
 
-To create custom evaluation examples, you can use toolvaluator as a library:
+For testing your own MCP tools, use the **kickstart tool** to generate a standalone evaluation script:
+
+```bash
+# Generate a custom evaluation script for your MCP server
+toolvaluator-init \
+  --server my_server \
+  --server-var mcp \
+  --output eval_my_tools.py
+
+# This auto-detects your tools and creates a template script
+# Edit eval_my_tools.py to customize the evaluation examples
+
+# Run your custom evaluation
+python eval_my_tools.py --model gpt-4o-mini --verbose
+
+# Use in CI/CD with quality gates
+python eval_my_tools.py --model gpt-4o --min-score 0.85
+```
+
+**What is a "dataset"?** The dataset is a collection of **evaluation examples** - test cases that verify if the model can:
+1. Decide when to call a tool (`should_call`)
+2. Choose the right tool (`tool_name`)
+3. Extract correct arguments (`arguments`)
+
+**Example evaluation example:**
+```python
+dspy.Example(
+    user_query="Find the company vacation policy",
+    tool_schema=schema,
+    expected_should_call=True,
+    expected_tool_name="search_docs",
+    expected_arguments={"query": "vacation policy"},
+).with_inputs("user_query", "tool_schema")
+```
+
+Each example is scored 0-1 across these three dimensions, and the overall score is the average.
+
+## Using Toolvaluator as a Library
+
+You can also use toolvaluator programmatically in your own scripts:
 
 ```python
-from toolvaluator import build_dataset, eval_model, get_tool_schemas_sync
+from toolvaluator import build_dataset, eval_model, get_tool_schemas_sync, extract_input_schema
+import dspy
 from my_server import mcp
 
 # Fetch tool schemas
 tool_schemas = get_tool_schemas_sync(mcp)
 
-# Customize the dataset (you can override build_dataset)
-# See src/toolvaluator/evaluator.py for the default implementation
+# Create custom evaluation examples
+examples = []
+if "my_tool" in tool_schemas:
+    schema = extract_input_schema(tool_schemas["my_tool"])
+    examples.append(
+        dspy.Example(
+            user_query="Use my tool to process ABC",
+            tool_schema=schema,
+            expected_should_call=True,
+            expected_tool_name="my_tool",
+            expected_arguments={"input": "ABC"},
+        ).with_inputs("user_query", "tool_schema")
+    )
 
 # Run evaluation
 result = eval_model(
     model_name="gpt-4o-mini",
     api_key="your-api-key",
     base_url=None,
-    dataset=dataset,
+    dataset=examples,
+    verbose=True,
 )
 
 print(f"Score: {result['score']:.3f}")
@@ -249,13 +301,69 @@ The test server includes these tools:
 
 ## Configuration Options
 
-### CLI Options
+### `toolvaluator` CLI Options
 
+Run evaluations using the built-in test dataset:
+
+```bash
+toolvaluator [OPTIONS]
+```
+
+**Options:**
 - `--model`: Model name (default: `gpt-4o-mini`)
 - `--api-key`: API key (defaults to `OPENAI_API_KEY` env var)
-- `--base-url`: Base URL for OpenAI-compatible endpoints
-- `--min-score`: Minimum acceptable score (exits with code 1 if below threshold)
+- `--base-url`: Base URL for OpenAI-compatible endpoints (e.g., `http://localhost:1234/v1`)
+- `--min-score`: Minimum acceptable score 0-1 (exits with code 1 if below threshold)
 - `--server`: Python module containing your FastMCP server (default: `server`)
+- `--server-var`: Name of the FastMCP instance variable (default: `mcp`)
+  - Use this if your server uses a different variable name like `app` or `server`
+- `--verbose`, `-v`: Show detailed debug information for each example
+
+**Examples:**
+```bash
+# Basic usage
+toolvaluator --server my_server
+
+# Custom variable name
+toolvaluator --server my_server --server-var app
+
+# Local model with verbose output
+toolvaluator --server my_server \
+  --model devstral-small \
+  --base-url http://localhost:1234/v1 \
+  --api-key lm-studio \
+  --verbose
+```
+
+### `toolvaluator-init` CLI Options
+
+Generate custom evaluation scripts:
+
+```bash
+toolvaluator-init [OPTIONS]
+```
+
+**Options:**
+- `--server`: Python module containing your MCP server (required)
+- `--server-var`: Name of the FastMCP instance variable (default: `mcp`)
+- `--output`, `-o`: Output filename (default: `eval_tools.py`)
+- `--tools`: Tool names to generate examples for (auto-detected if not specified)
+- `--force`, `-f`: Overwrite output file if it exists
+
+**Examples:**
+```bash
+# Auto-detect tools and generate script
+toolvaluator-init --server my_server --output eval_my_tools.py
+
+# Specify custom variable name
+toolvaluator-init --server my_server --server-var app --output eval.py
+
+# Specify specific tools
+toolvaluator-init --server my_server --tools tool1 tool2 tool3
+
+# Overwrite existing file
+toolvaluator-init --server my_server --output eval.py --force
+```
 
 ### Environment Variables
 
@@ -303,16 +411,86 @@ def search_docs(query: str) -> str:
 
 ### 3. CI/CD Quality Gates
 
-Add to your CI pipeline:
+Use generated evaluation scripts in your CI/CD pipeline to ensure tool quality:
 
+**Step 1: Generate evaluation script (one-time)**
+```bash
+toolvaluator-init --server my_server --output eval_tools.py
+# Edit eval_tools.py to add your evaluation examples
+# Commit eval_tools.py to your repository
+```
+
+**Step 2: Add to your CI pipeline**
+
+GitHub Actions example (`.github/workflows/test.yml`):
+```yaml
+name: Test MCP Tools
+
+on: [push, pull_request]
+
+jobs:
+  test-tools:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install toolvaluator
+          pip install -r requirements.txt  # Your project dependencies
+
+      - name: Evaluate MCP Tools
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python eval_tools.py --model gpt-4o-mini --min-score 0.85 --verbose
+```
+
+**Using the CLI directly:**
 ```bash
 # Fail the build if tool-calling accuracy drops below 85%
 toolvaluator --server my_server --min-score 0.85
 ```
 
+**Benefits:**
+- Catch regressions in tool descriptions or schemas
+- Ensure model compatibility before deployment
+- Track quality metrics over time
+- Prevent degradation of tool-calling accuracy
+
 ### 4. Latency Benchmarking
 
-Track tool-calling latency across model versions or configurations.
+Track tool-calling latency across model versions or configurations:
+
+```bash
+# Compare latency between models
+python eval_tools.py --model gpt-4o-mini --verbose > results_mini.txt
+python eval_tools.py --model gpt-4o --verbose > results_4o.txt
+
+# Analyze latency stats from output
+grep "Latency stats" results_*.txt
+```
+
+### 5. Custom Evaluation Workflows
+
+Create specialized evaluation scripts for different scenarios:
+
+```bash
+# Generate evaluation for production tools
+toolvaluator-init --server prod_server --output eval_prod.py
+
+# Generate evaluation for experimental tools
+toolvaluator-init --server experimental_server --output eval_experimental.py
+
+# Run both in your test suite
+python eval_prod.py --model gpt-4o --min-score 0.90      # High bar for prod
+python eval_experimental.py --model gpt-4o --min-score 0.70  # Lower bar for experiments
+```
 
 ## Contributing
 

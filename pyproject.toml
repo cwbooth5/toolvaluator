@@ -38,6 +38,7 @@ dev = [
 
 [project.scripts]
 toolvaluator = "toolvaluator.cli:main"
+toolvaluator-init = "toolvaluator.init:main"
 
 [project.urls]
 Homepage = "https://github.com/cwbooth5/toolvaluator"
