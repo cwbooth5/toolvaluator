@@ -1,0 +1,100 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: 'patch'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install hatch ruff pytest pytest-asyncio pytest-cov
+          pip install -e ".[dev]"
+
+      - name: Run ruff check
+        run: |
+          echo "Running ruff check..."
+          ruff check src/ tests/
+
+      - name: Run unit tests
+        run: |
+          echo "Running unit tests..."
+          pytest tests/ -v
+
+      - name: Get current version
+        id: current_version
+        run: |
+          CURRENT_VERSION=$(hatch version)
+          echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          echo "Current version: $CURRENT_VERSION"
+
+      - name: Bump version
+        id: bump_version
+        run: |
+          echo "Bumping ${{ inputs.version_bump }} version..."
+          hatch version ${{ inputs.version_bump }}
+          NEW_VERSION=$(hatch version)
+          echo "new=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "New version: $NEW_VERSION"
+
+      - name: Commit version bump
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add src/toolvaluator/__init__.py
+          git commit -m "Bump version to ${{ steps.bump_version.outputs.new }}"
+          git push
+
+      - name: Build package
+        run: |
+          echo "Building package..."
+          hatch build
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_VERSION: ${{ steps.bump_version.outputs.new }}
+          CURRENT_VERSION: ${{ steps.current_version.outputs.current }}
+          VERSION_BUMP: ${{ inputs.version_bump }}
+        run: |
+          echo "Creating GitHub release v$NEW_VERSION..."
+          gh release create "v$NEW_VERSION" \
+            --title "Release v$NEW_VERSION" \
+            --notes "Release v$NEW_VERSION
+
+          Version bumped from $CURRENT_VERSION to $NEW_VERSION
+
+          Changes:
+          - $VERSION_BUMP version bump
+
+          Built with:
+          - All unit tests passing
+          - Ruff checks passing" \
+            ./dist/toolvaluator-${NEW_VERSION}-py3-none-any.whl \
+            ./dist/toolvaluator-${NEW_VERSION}.tar.gz

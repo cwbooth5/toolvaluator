@@ -189,7 +189,7 @@ if __name__ == "__main__":
 def generate_tool_examples(tool_names, indent="    "):
     """Generate template examples for the given tool names."""
     if not tool_names:
-        return f'{indent}# Add examples for your tools here\n{indent}pass'
+        return f"{indent}# Add examples for your tools here\n{indent}pass"
 
     examples = []
     for tool_name in tool_names:
@@ -231,7 +231,7 @@ def generate_tool_examples(tool_names, indent="    "):
 '''
         examples.append(example)
 
-    return '\n'.join(examples)
+    return "\n".join(examples)
 
 
 def detect_tools_from_server(server_module, server_var):
@@ -253,7 +253,7 @@ def detect_tools_from_server(server_module, server_var):
 def main():
     parser = argparse.ArgumentParser(
         description="Generate a custom evaluation script for your MCP tools",
-        epilog="Example: toolvaluator-init --server my_server --output eval_my_tools.py"
+        epilog="Example: toolvaluator-init --server my_server --output eval_my_tools.py",
     )
     parser.add_argument(
         "--server",
@@ -292,7 +292,10 @@ def main():
     output_path = Path(args.output)
     if output_path.exists() and not args.force:
         print(f"ERROR: Output file '{args.output}' already exists!", file=sys.stderr)
-        print("Use --force to overwrite, or specify a different --output filename", file=sys.stderr)
+        print(
+            "Use --force to overwrite, or specify a different --output filename",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     # Detect or use provided tool names

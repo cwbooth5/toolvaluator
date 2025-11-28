@@ -243,16 +243,15 @@ def test_example_builder_method_chaining(test_mcp_server):
 
 def test_example_builder_invalid_tool(test_mcp_server):
     """Test ExampleBuilder raises error for invalid tool."""
-    from toolvaluator import get_tool_schemas_sync
     import pytest
+
+    from toolvaluator import get_tool_schemas_sync
 
     tool_schemas = get_tool_schemas_sync(test_mcp_server)
     builder = ExampleBuilder(tool_schemas)
 
     with pytest.raises(ValueError, match="Tool 'nonexistent' not found"):
-        builder.add_positive(
-            tool="nonexistent", query="test", arguments={"arg": "val"}
-        )
+        builder.add_positive(tool="nonexistent", query="test", arguments={"arg": "val"})
 
 
 def test_example_builder_build_method(test_mcp_server):
@@ -262,9 +261,7 @@ def test_example_builder_build_method(test_mcp_server):
     tool_schemas = get_tool_schemas_sync(test_mcp_server)
     builder = ExampleBuilder(tool_schemas)
 
-    builder.add_positive(
-        tool="search_docs", query="test", arguments={"query": "test"}
-    )
+    builder.add_positive(tool="search_docs", query="test", arguments={"query": "test"})
 
     examples = builder.build()
     assert examples == builder.examples

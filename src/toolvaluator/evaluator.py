@@ -466,12 +466,14 @@ class ChainedEvaluator:
                 f"Available: {', '.join(self.tool_schemas.keys())}"
             )
 
-        self.steps.append({
-            "expected_tool": expected_tool,
-            "expected_arguments": expected_arguments or {},
-            "initial_query": initial_query,
-            "mock_result": mock_result,
-        })
+        self.steps.append(
+            {
+                "expected_tool": expected_tool,
+                "expected_arguments": expected_arguments or {},
+                "initial_query": initial_query,
+                "mock_result": mock_result,
+            }
+        )
         return self
 
     async def _execute_tool_call(
@@ -514,9 +516,7 @@ class ChainedEvaluator:
                 if "/" in self.model_name
                 else f"openai/{self.model_name}"
             )
-            lm = dspy.LM(
-                model=model_name, api_key=self.api_key, base_url=self.base_url
-            )
+            lm = dspy.LM(model=model_name, api_key=self.api_key, base_url=self.base_url)
         else:
             lm = dspy.LM(model=self.model_name, api_key=self.api_key)
 
@@ -609,11 +609,13 @@ class ChainedEvaluator:
 
             # Update context for next step
             if tool_result:
-                conversation_context.append({
-                    "query": current_query,
-                    "tool": pred.tool_name,
-                    "result": tool_result,
-                })
+                conversation_context.append(
+                    {
+                        "query": current_query,
+                        "tool": pred.tool_name,
+                        "result": tool_result,
+                    }
+                )
 
                 # Build query for next step using conversation history
                 if i + 1 < len(self.steps):
@@ -629,13 +631,9 @@ class ChainedEvaluator:
                     )
 
         # Calculate overall score
-        tool_scores = [
-            1.0 if r["tool_correct"] else 0.0 for r in step_results
-        ]
+        tool_scores = [1.0 if r["tool_correct"] else 0.0 for r in step_results]
         args_scores = [r["args_score"] for r in step_results]
-        overall_score = (sum(tool_scores) + sum(args_scores)) / (
-            2 * len(step_results)
-        )
+        overall_score = (sum(tool_scores) + sum(args_scores)) / (2 * len(step_results))
 
         return {
             "score": overall_score,
@@ -922,7 +920,9 @@ def eval_model(
             print(f"    Query: {example.user_query}")
             print()
             print("    Expected behavior:")
-            print(f"      should_call: {getattr(example, 'expected_should_call', 'N/A')}")
+            print(
+                f"      should_call: {getattr(example, 'expected_should_call', 'N/A')}"
+            )
             print(f"      tool_name: {getattr(example, 'expected_tool_name', 'N/A')}")
             print(f"      arguments: {getattr(example, 'expected_arguments', {})}")
             print()
