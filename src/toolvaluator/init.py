@@ -54,8 +54,37 @@ def build_evaluation_dataset(tool_schemas):
     """
     examples = []
 
+    # Example format (uncomment and customize):
+    # if "your_tool_name" in tool_schemas:
+    #     schema = extract_input_schema(tool_schemas["your_tool_name"])
+    #
+    #     # Positive example - should use the tool
+    #     examples.append(
+    #         dspy.Example(
+    #             user_query="Natural language query that should trigger this tool",
+    #             tool_schema=schema,  # Auto-extracted from your MCP server
+    #             expected_should_call=True,  # Should the model call this tool?
+    #             expected_tool_name="your_tool_name",  # Which tool should be called?
+    #             expected_arguments={{  # What arguments should be extracted?
+    #                 "arg1": "expected_value1",
+    #                 "arg2": 123,
+    #             }},
+    #         ).with_inputs("user_query", "tool_schema")
+    #     )
+    #
+    #     # Negative example - should NOT use the tool
+    #     examples.append(
+    #         dspy.Example(
+    #             user_query="A query that doesn't need this tool",
+    #             tool_schema=schema,
+    #             expected_should_call=False,  # Model should answer directly
+    #             expected_tool_name="",
+    #             expected_arguments={{}},
+    #         ).with_inputs("user_query", "tool_schema")
+    #     )
+
     # TODO: Customize these examples for your tools!
-    # Below are template examples - replace with your actual tools
+    # Below are auto-generated templates - replace with your actual use cases
 
 {tool_examples}
 

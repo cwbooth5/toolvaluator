@@ -480,21 +480,32 @@ def eval_model(
         # Print detailed debug info if verbose
         if verbose:
             print(f"    Query: {example.user_query}")
-            print(f"    Expected tool: {getattr(example, 'expected_tool_name', 'N/A')}")
-            print(f"    Predicted tool: {dbg.get('pred_tool_name', 'N/A')}")
-            print(f"    Expected args: {getattr(example, 'expected_arguments', {})}")
-            print(f"    Predicted args: {dbg.get('pred_arguments', {})}")
+            print()
+            print("    Expected behavior:")
+            print(f"      should_call: {getattr(example, 'expected_should_call', 'N/A')}")
+            print(f"      tool_name: {getattr(example, 'expected_tool_name', 'N/A')}")
+            print(f"      arguments: {getattr(example, 'expected_arguments', {})}")
+            print()
+            print("    Model's tool call:")
+            print(f"      should_call: {pred.should_call}")
+            print(f"      tool_name: {dbg.get('pred_tool_name', 'N/A')}")
+            print(f"      arguments: {dbg.get('pred_arguments', {})}")
+            print()
             print("    Scores breakdown:")
             print(f"      - Should call: {dbg.get('should_call_score', 'N/A'):.3f}")
             print(f"      - Tool name: {dbg.get('tool_name_score', 'N/A'):.3f}")
             print(f"      - Arguments: {dbg.get('arg_score', 'N/A'):.3f}")
             if dbg.get("arg_details", {}).get("mismatches"):
+                print()
                 print("    Argument mismatches:")
                 for key, details in dbg["arg_details"]["mismatches"].items():
                     print(
                         f"      - {key}: expected={details['expected']}, got={details['predicted']}"
                     )
+            print()
             print(f"    Latency: {lat:.1f}ms" if lat else "    Latency: N/A")
+            print()
+            print("    " + "=" * 70)
             print()
 
     overall_score = sum(scores) / len(scores) if scores else 0.0
