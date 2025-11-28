@@ -13,7 +13,18 @@ You can use this to:
 
 # Design
 
+I made this to fill out a little gap in my toolset where I would create all these
+MCP servers but wouldn't figure out what to do when models stumbled around
+my tool definintions. The tool name and organization along with the signature
+and docstring is crucial to making sure the models just figure out my tools.
+In practice, I've seen wildly different behavior from model to model. The accuracy
+of the model's decisions is quite important. The latency is a secondary concern
+of mine because there are some situations when I need to string together a bunch
+of tool calls and want to see how many I can cram into a unit of time.
+
 This doesn't get the model to call the tool. We are only measuring the model's decision.
+It's reading the MCP tool definition in your tool and using that with the model,
+just like when your AI client registers your tools with the model.
 
 ## Installation
 
@@ -27,6 +38,18 @@ uv pip install toolvaluator
 git clone https://github.com/cwbooth5/toolvaluator.git
 cd toolvaluator
 uv pip install -e ".[dev]"
+
+or for an editable install...
+
+uv tool install -e .
+```
+
+### Tool install
+
+You can install the tool straight out of the github repo.
+
+```bash
+uv tool install --from https://github.com/cwbooth5/toolvaluator.git toolvaluator
 ```
 
 ### Using pip
