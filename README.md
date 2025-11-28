@@ -489,10 +489,48 @@ for step in result['step_results']:
     print(f"  Step {step['step']}: {step['predicted_tool']} → {step['tool_result']}")
 ```
 
+**Using Mocks to Avoid Side Effects:**
+
+To test chains without actually executing tools, use mocks:
+
+```python
+# Global mocks - apply to all uses of a tool
+chain = ChainedEvaluator(
+    tool_schemas=tool_schemas,
+    mcp_server=mcp,
+    model_name="gpt-4o-mini",
+    api_key="your-api-key",
+    mocks={
+        "calculate": lambda args: str(args["a"] + args["b"]),  # Callable mock
+        "search_docs": "Here are the relevant documents...",   # Static mock
+    }
+)
+
+# Per-step mocks - override for specific steps
+chain.add_step(
+    initial_query="Calculate 5 + 10",
+    expected_tool="calculate",
+    expected_arguments={"operation": "add", "a": 5, "b": 10},
+    mock_result="15"  # Override global mock for this step only
+)
+
+result = chain.evaluate()  # No tools executed!
+```
+
+**Mock Priority:**
+1. Per-step `mock_result` (highest priority)
+2. Global `mocks` dict
+3. Actual tool execution (lowest priority)
+
+**Mock Types:**
+- **Static string**: `mocks={"tool": "result"}` - Always returns "result"
+- **Callable**: `mocks={"tool": lambda args: ...}` - Computes result from arguments
+- **Per-step override**: `add_step(..., mock_result="...")` - Overrides global mock
+
 **How it works:**
 1. Model receives initial query
 2. Model decides which tool to call (step 1)
-3. **Tool is actually executed** on your MCP server
+3. **Tool is executed** (or mocked if specified)
 4. Result is fed back to model as context
 5. Model decides next tool call (step 2)
 6. Process continues for all steps

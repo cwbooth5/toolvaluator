@@ -364,6 +364,7 @@ class ChainedEvaluator:
     - Use with caution in production environments
 
     Usage:
+        # Without mocks (tools execute for real)
         chain = ChainedEvaluator(
             tool_schemas=tool_schemas,
             mcp_server=mcp,
@@ -383,6 +384,29 @@ class ChainedEvaluator:
         )
 
         result = chain.evaluate()
+
+    Usage with mocks (no side effects):
+        # Global mocks - apply to all steps
+        chain = ChainedEvaluator(
+            tool_schemas=tool_schemas,
+            mcp_server=mcp,
+            model_name="gpt-4o-mini",
+            api_key="your-key",
+            mocks={
+                "get_location": "San Francisco",
+                "calculate": lambda args: str(args["a"] * args["b"])  # Callable mock
+            }
+        )
+
+        # Per-step mocks - override global mocks for specific steps
+        chain.add_step(
+            initial_query="Calculate 5 * 10",
+            expected_tool="calculate",
+            expected_arguments={"operation": "multiply", "a": 5, "b": 10},
+            mock_result="50"  # Use this instead of executing or global mock
+        )
+
+        result = chain.evaluate()
     """
 
     def __init__(
@@ -392,6 +416,7 @@ class ChainedEvaluator:
         model_name: str,
         api_key: str,
         base_url: str | None = None,
+        mocks: dict[str, Any] | None = None,
     ):
         """
         Initialize the chained evaluator.
@@ -402,12 +427,16 @@ class ChainedEvaluator:
             model_name: Name of the model to evaluate
             api_key: API key for the model
             base_url: Optional base URL for OpenAI-compatible endpoints
+            mocks: Optional dict of tool_name -> mock_result or callable
+                   Use to avoid executing tools (reduces side effects)
+                   Can be string result or callable(args) -> result
         """
         self.tool_schemas = tool_schemas
         self.mcp_server = mcp_server
         self.model_name = model_name
         self.api_key = api_key
         self.base_url = base_url
+        self.mocks = mocks or {}
         self.steps: list[dict[str, Any]] = []
         self.execution_history: list[dict[str, Any]] = []
 
@@ -416,6 +445,7 @@ class ChainedEvaluator:
         expected_tool: str,
         expected_arguments: dict[str, Any] | None = None,
         initial_query: str | None = None,
+        mock_result: str | None = None,
     ) -> "ChainedEvaluator":
         """
         Add a step to the chain.
@@ -424,6 +454,8 @@ class ChainedEvaluator:
             expected_tool: Name of tool that should be called in this step
             expected_arguments: Expected arguments (None for wildcards)
             initial_query: For first step only - the user's initial query
+            mock_result: Optional mock result to use instead of executing tool
+                        Overrides any global mock for this specific step
 
         Returns:
             Self for method chaining
@@ -438,6 +470,7 @@ class ChainedEvaluator:
             "expected_tool": expected_tool,
             "expected_arguments": expected_arguments or {},
             "initial_query": initial_query,
+            "mock_result": mock_result,
         })
         return self
 
@@ -531,15 +564,32 @@ class ChainedEvaluator:
             # Execute the tool if model got it right
             tool_result = None
             if tool_correct and pred.should_call:
-                print(f"Executing {pred.tool_name}...")
-                try:
-                    tool_result = asyncio.run(
-                        self._execute_tool_call(pred.tool_name, pred.arguments)
-                    )
-                    print(f"Result: {tool_result}")
-                except Exception as e:
-                    print(f"Tool execution failed: {e}")
-                    tool_result = f"Error: {e}"
+                # Check for mocks (per-step overrides global)
+                mock_result = step.get("mock_result")
+                global_mock = self.mocks.get(pred.tool_name)
+
+                if mock_result is not None:
+                    # Per-step mock takes priority
+                    tool_result = mock_result
+                    print(f"Using mock result for {pred.tool_name}: {tool_result}")
+                elif global_mock is not None:
+                    # Global mock
+                    if callable(global_mock):
+                        tool_result = global_mock(pred.arguments)
+                    else:
+                        tool_result = str(global_mock)
+                    print(f"Using global mock for {pred.tool_name}: {tool_result}")
+                else:
+                    # Actually execute the tool
+                    print(f"Executing {pred.tool_name}...")
+                    try:
+                        tool_result = asyncio.run(
+                            self._execute_tool_call(pred.tool_name, pred.arguments)
+                        )
+                        print(f"Result: {tool_result}")
+                    except Exception as e:
+                        print(f"Tool execution failed: {e}")
+                        tool_result = f"Error: {e}"
 
             # Record step
             step_result = {
