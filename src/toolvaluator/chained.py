@@ -93,6 +93,7 @@ class ChainedEvaluator:
         api_key: str,
         base_url: str | None = None,
         mocks: dict[str, Any] | None = None,
+        verbose: bool = False,
         system_prompt: str | None = None,
     ):
         """
@@ -107,6 +108,7 @@ class ChainedEvaluator:
             mocks: Optional dict of tool_name -> mock_result or callable
                    Use to avoid executing tools (reduces side effects)
                    Can be string result or callable(args) -> result
+            verbose: If True, print detailed debug information for each step
             system_prompt: Optional default system prompt for all steps
                           (can be overridden per-step)
         """
@@ -116,6 +118,7 @@ class ChainedEvaluator:
         self.api_key = api_key
         self.base_url = base_url
         self.mocks = mocks or {}
+        self.verbose = verbose
         self.system_prompt = system_prompt
         self.steps: list[dict[str, Any]] = []
         self.execution_history: list[dict[str, Any]] = []
@@ -246,6 +249,46 @@ class ChainedEvaluator:
             print(f"With arguments: {pred.arguments}")
             print(f"Tool correct: {tool_correct}, Args score: {args_score:.2f}")
 
+            # Verbose output
+            if self.verbose:
+                print()
+                print("    Expected behavior:")
+                print(f"      tool: {expected_tool}")
+                print(f"      arguments: {step['expected_arguments']}")
+                print()
+                print("    Model's tool call:")
+                print(f"      should_call: {pred.should_call}")
+                print(f"      tool: {pred.tool_name}")
+                print(f"      arguments: {pred.arguments}")
+                print()
+                print("    Scores:")
+                print(f"      Tool correct: {1.0 if tool_correct else 0.0:.3f}")
+                print(f"      Arguments: {args_score:.3f}")
+
+                if args_details.get("mismatches"):
+                    print()
+                    print("    Argument mismatches:")
+                    for key, details in args_details["mismatches"].items():
+                        print(
+                            f"      - {key}: expected={details['expected']}, got={details['predicted']}"
+                        )
+
+                if args_details.get("extra_keys"):
+                    print()
+                    print("    Extra unexpected arguments:")
+                    for key in args_details["extra_keys"]:
+                        print(f"      - {key}: {args_details['extra_args'][key]}")
+
+                if args_details.get("error"):
+                    print()
+                    print(f"    Error: {args_details['error']}")
+
+                latency_ms = getattr(pred, "latency_ms", None)
+                if latency_ms:
+                    print()
+                    print(f"    Latency: {latency_ms:.1f}ms")
+                print()
+
             # Execute the tool if model got it right
             tool_result = None
             if tool_correct and pred.should_call:
@@ -333,6 +376,7 @@ def eval_chained_model(
     api_key: str,
     dataset: list[dict[str, Any]],
     base_url: str | None = None,
+    verbose: bool = False,
     system_prompt: str | None = None,
 ) -> dict[str, Any]:
     """
@@ -346,6 +390,7 @@ def eval_chained_model(
         api_key: API key for the model
         dataset: List of chain configurations from ChainedExampleBuilder.build()
         base_url: Optional base URL for OpenAI-compatible endpoints
+        verbose: If True, print detailed debug information for each step
         system_prompt: Optional default system prompt for all steps
                       (can be overridden per-step)
 
@@ -408,6 +453,7 @@ def eval_chained_model(
             api_key=api_key,
             base_url=base_url,
             mocks=chain_config.get("mocks", {}),
+            verbose=verbose,
             system_prompt=system_prompt,
         )
 
