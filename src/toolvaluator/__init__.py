@@ -16,7 +16,7 @@ You can import from the package root or from specific modules:
     from toolvaluator.builders import ExampleBuilder  # Direct module import
 """
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 from .evaluator import (
     ChainedEvaluator,
