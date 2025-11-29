@@ -441,3 +441,611 @@ def test_chained_evaluator_mixed_mocks_and_real_execution(test_mcp_server):
     assert len(chain.steps) == 2
     assert "calculate" in chain.mocks
     assert "search_docs" not in chain.mocks
+
+
+def test_build_dataset(test_mcp_server):
+    """Test build_dataset creates examples for available tools."""
+    from toolvaluator import build_dataset, get_tool_schemas_sync
+
+    tool_schemas = get_tool_schemas_sync(test_mcp_server)
+    dataset = build_dataset(tool_schemas)
+
+    # Should create multiple examples
+    assert len(dataset) > 0
+
+    # All examples should have required fields
+    for example in dataset:
+        assert hasattr(example, "user_query")
+        assert hasattr(example, "tool_name")
+        assert hasattr(example, "expected_should_call")
+
+
+def test_chained_example_builder_basic(test_mcp_server):
+    """Test ChainedExampleBuilder basic functionality."""
+    from toolvaluator import ChainedExampleBuilder, get_tool_schemas_sync
+
+    tool_schemas = get_tool_schemas_sync(test_mcp_server)
+    builder = ChainedExampleBuilder(tool_schemas, test_mcp_server)
+
+    builder.add_chain(mocks={"calculate": "50"}).add_step(
+        initial_query="Calculate 5 * 10",
+        expected_tool="calculate",
+        expected_arguments={"operation": "multiply", "a": 5, "b": 10},
+    )
+
+    dataset = builder.build()
+    assert len(dataset) == 1
+    assert len(dataset[0]["steps"]) == 1
+    assert dataset[0]["mocks"]["calculate"] == "50"
+
+
+def test_chained_example_builder_multiple_chains(test_mcp_server):
+    """Test ChainedExampleBuilder with multiple chains."""
+    from toolvaluator import ChainedExampleBuilder, get_tool_schemas_sync
+
+    tool_schemas = get_tool_schemas_sync(test_mcp_server)
+    builder = ChainedExampleBuilder(tool_schemas, test_mcp_server)
+
+    # First chain
+    builder.add_chain().add_step(
+        initial_query="Query 1",
+        expected_tool="calculate",
+        expected_arguments={"operation": "add", "a": 1, "b": 2},
+    )
+
+    # Second chain
+    builder.add_chain().add_step(
+        initial_query="Query 2",
+        expected_tool="search_docs",
+        expected_arguments={"query": "test"},
+    )
+
+    dataset = builder.build()
+    assert len(dataset) == 2
+    assert len(dataset[0]["steps"]) == 1
+    assert len(dataset[1]["steps"]) == 1
+
+
+def test_chained_example_builder_requires_add_chain_first(test_mcp_server):
+    """Test ChainedExampleBuilder raises error if add_step called before add_chain."""
+    import pytest
+
+    from toolvaluator import ChainedExampleBuilder, get_tool_schemas_sync
+
+    tool_schemas = get_tool_schemas_sync(test_mcp_server)
+    builder = ChainedExampleBuilder(tool_schemas, test_mcp_server)
+
+    with pytest.raises(ValueError, match="Must call add_chain"):
+        builder.add_step(
+            initial_query="test", expected_tool="calculate", expected_arguments={}
+        )
+
+
+def test_chained_example_builder_invalid_tool(test_mcp_server):
+    """Test ChainedExampleBuilder raises error for invalid tool."""
+    import pytest
+
+    from toolvaluator import ChainedExampleBuilder, get_tool_schemas_sync
+
+    tool_schemas = get_tool_schemas_sync(test_mcp_server)
+    builder = ChainedExampleBuilder(tool_schemas, test_mcp_server)
+
+    builder.add_chain()
+    with pytest.raises(ValueError, match="Tool 'nonexistent' not found"):
+        builder.add_step(
+            initial_query="test", expected_tool="nonexistent", expected_arguments={}
+        )
+
+
+def test_example_builder_with_system_prompt(test_mcp_server):
+    """Test ExampleBuilder with system prompt."""
+    from toolvaluator import ExampleBuilder, get_tool_schemas_sync
+
+    tool_schemas = get_tool_schemas_sync(test_mcp_server)
+    builder = ExampleBuilder(tool_schemas)
+
+    builder.add_positive(
+        tool="search_docs",
+        query="Find documentation",
+        arguments={"query": "test"},
+        system_prompt="You are a helpful assistant.",
+    )
+
+    assert len(builder.examples) == 1
+    example = builder.examples[0]
+    assert hasattr(example, "system_prompt")
+    assert example.system_prompt == "You are a helpful assistant."
+
+
+def test_chained_evaluator_add_step_invalid_tool(test_mcp_server):
+    """Test ChainedEvaluator.add_step validates tool existence."""
+    import pytest
+
+    from toolvaluator import ChainedEvaluator, get_tool_schemas_sync
+
+    tool_schemas = get_tool_schemas_sync(test_mcp_server)
+    chain = ChainedEvaluator(
+        tool_schemas=tool_schemas,
+        mcp_server=test_mcp_server,
+        model_name="gpt-4o-mini",
+        api_key="test-key",
+    )
+
+    with pytest.raises(ValueError, match="Tool 'invalid_tool' not found"):
+        chain.add_step(
+            initial_query="test", expected_tool="invalid_tool", expected_arguments={}
+        )
+
+
+def test_chained_evaluator_evaluate_no_steps(test_mcp_server):
+    """Test ChainedEvaluator.evaluate raises error if no steps."""
+    import pytest
+
+    from toolvaluator import ChainedEvaluator, get_tool_schemas_sync
+
+    tool_schemas = get_tool_schemas_sync(test_mcp_server)
+    chain = ChainedEvaluator(
+        tool_schemas=tool_schemas,
+        mcp_server=test_mcp_server,
+        model_name="gpt-4o-mini",
+        api_key="test-key",
+    )
+
+    with pytest.raises(ValueError, match="No steps defined"):
+        chain.evaluate()
+
+
+def test_chained_evaluator_evaluate_missing_initial_query(test_mcp_server):
+    """Test ChainedEvaluator.evaluate raises error if first step has no initial_query."""
+    import pytest
+
+    from toolvaluator import ChainedEvaluator, get_tool_schemas_sync
+
+    tool_schemas = get_tool_schemas_sync(test_mcp_server)
+    chain = ChainedEvaluator(
+        tool_schemas=tool_schemas,
+        mcp_server=test_mcp_server,
+        model_name="gpt-4o-mini",
+        api_key="test-key",
+    )
+
+    chain.add_step(
+        expected_tool="calculate",
+        expected_arguments={"operation": "add", "a": 1, "b": 2},
+    )
+
+    with pytest.raises(ValueError, match="First step must have initial_query"):
+        chain.evaluate()
+
+
+def test_generic_tool_caller_module_with_system_prompt():
+    """Test GenericToolCallerModule prepends system prompt."""
+    from unittest.mock import Mock, patch
+
+    from toolvaluator.core import GenericToolCallerModule
+
+    # Mock the DSPy Predict class
+    with patch("toolvaluator.core.dspy.Predict") as MockPredict:
+        mock_predict_instance = Mock()
+        mock_result = Mock()
+        mock_result.arguments_json = '{"arg": "value"}'
+        mock_result.should_call = True
+        mock_predict_instance.return_value = mock_result
+        MockPredict.return_value = mock_predict_instance
+
+        module = GenericToolCallerModule()
+
+        # Call with system prompt
+        module.forward(
+            user_query="What is the weather?",
+            tool_name="get_weather",
+            tool_description="Get weather info",
+            tool_schema={"type": "object", "properties": {}},
+            system_prompt="You are a weather assistant.",
+        )
+
+        # Verify system prompt was prepended
+        call_args = mock_predict_instance.call_args
+        assert call_args is not None
+        assert "You are a weather assistant." in call_args[1]["user_query"]
+        assert "What is the weather?" in call_args[1]["user_query"]
+
+
+def test_generic_tool_caller_module_without_system_prompt():
+    """Test GenericToolCallerModule works without system prompt."""
+    from unittest.mock import Mock, patch
+
+    from toolvaluator.core import GenericToolCallerModule
+
+    with patch("toolvaluator.core.dspy.Predict") as MockPredict:
+        mock_predict_instance = Mock()
+        mock_result = Mock()
+        mock_result.arguments_json = '{"arg": "value"}'
+        mock_result.should_call = True
+        mock_predict_instance.return_value = mock_result
+        MockPredict.return_value = mock_predict_instance
+
+        module = GenericToolCallerModule()
+
+        module.forward(
+            user_query="What is the weather?",
+            tool_name="get_weather",
+            tool_description="Get weather info",
+            tool_schema={"type": "object", "properties": {}},
+        )
+
+        # Verify query is used as-is
+        call_args = mock_predict_instance.call_args
+        assert call_args is not None
+        assert call_args[1]["user_query"] == "What is the weather?"
+
+
+def test_generic_tool_caller_module_invalid_json():
+    """Test GenericToolCallerModule handles invalid JSON in arguments."""
+    from unittest.mock import Mock, patch
+
+    from toolvaluator.core import GenericToolCallerModule
+
+    with patch("toolvaluator.core.dspy.Predict") as MockPredict:
+        mock_predict_instance = Mock()
+        mock_result = Mock()
+        mock_result.arguments_json = "invalid json{"
+        mock_result.should_call = True
+        mock_predict_instance.return_value = mock_result
+        MockPredict.return_value = mock_predict_instance
+
+        module = GenericToolCallerModule()
+
+        result = module.forward(
+            user_query="test",
+            tool_name="test_tool",
+            tool_description="test",
+            tool_schema={},
+        )
+
+        # Should return empty dict for invalid JSON
+        assert result.arguments == {}
+
+
+def test_tool_call_metric_should_call_mismatch():
+    """Test tool_call_metric when should_call doesn't match."""
+    from unittest.mock import Mock
+
+    import dspy
+
+    from toolvaluator.core import tool_call_metric
+
+    example = dspy.Example(
+        expected_should_call=True, expected_tool_name="test_tool", expected_arguments={}
+    )
+
+    pred = Mock()
+    pred.should_call = False
+    pred.tool_name = "test_tool"
+    pred.arguments = {}
+    pred.latency_ms = 100
+
+    score = tool_call_metric(example, pred)
+
+    # should_call wrong (0), tool_name correct (1), args correct (1) = 2/3
+    assert abs(score - 0.666) < 0.01
+
+
+def test_tool_call_metric_tool_name_mismatch():
+    """Test tool_call_metric when tool name doesn't match."""
+    from unittest.mock import Mock
+
+    import dspy
+
+    from toolvaluator.core import tool_call_metric
+
+    example = dspy.Example(
+        expected_should_call=True,
+        expected_tool_name="correct_tool",
+        expected_arguments={},
+    )
+
+    pred = Mock()
+    pred.should_call = True
+    pred.tool_name = "wrong_tool"
+    pred.arguments = {}
+    pred.latency_ms = 100
+
+    score = tool_call_metric(example, pred)
+
+    # should_call correct (1), tool_name wrong (0), args correct (1) = 2/3
+    assert abs(score - 0.666) < 0.01
+
+
+def test_extract_tool_description_from_object():
+    """Test extract_tool_description with object-like tool def."""
+    from toolvaluator.core import extract_tool_description
+
+    class ToolDef:
+        description = "Test description"
+
+    tool_def = ToolDef()
+    desc = extract_tool_description(tool_def)
+    assert desc == "Test description"
+
+
+def test_extract_tool_description_missing():
+    """Test extract_tool_description when description is missing."""
+    from toolvaluator.core import extract_tool_description
+
+    tool_def = {"name": "test"}
+    desc = extract_tool_description(tool_def)
+    assert desc == ""
+
+
+def test_extract_input_schema_from_object():
+    """Test extract_input_schema with object-like tool def."""
+    from toolvaluator.core import extract_input_schema
+
+    class ToolDef:
+        inputSchema = {"type": "object"}
+
+    tool_def = ToolDef()
+    schema = extract_input_schema(tool_def)
+    assert schema == {"type": "object"}
+
+
+def test_eval_model_basic(test_mcp_server):
+    """Test eval_model with mocked DSPy LM."""
+    from unittest.mock import MagicMock, patch
+
+    from toolvaluator import ExampleBuilder, eval_model, get_tool_schemas_sync
+
+    tool_schemas = get_tool_schemas_sync(test_mcp_server)
+    builder = ExampleBuilder(tool_schemas)
+
+    builder.add_positive(
+        tool="calculate",
+        query="What is 5 + 10?",
+        arguments={"operation": "add", "a": 5, "b": 10},
+    )
+
+    dataset = builder.build()
+
+    # Mock DSPy LM and predictions
+    with (
+        patch("toolvaluator.evaluation.dspy.LM") as MockLM,
+        patch("toolvaluator.evaluation.dspy.configure"),
+    ):
+        mock_lm = MagicMock()
+        MockLM.return_value = mock_lm
+
+        with patch("toolvaluator.core.dspy.Predict") as MockPredict:
+            mock_predict = MagicMock()
+            mock_result = MagicMock()
+            mock_result.should_call = True
+            mock_result.arguments_json = '{"operation": "add", "a": 5, "b": 10}'
+            mock_result.arguments = {"operation": "add", "a": 5, "b": 10}
+            mock_result.tool_name = "calculate"
+            mock_predict.return_value = mock_result
+            MockPredict.return_value = mock_predict
+
+            result = eval_model(
+                model_name="gpt-4o-mini",
+                api_key="test-key",
+                base_url=None,
+                dataset=dataset,
+                verbose=False,
+            )
+
+            # Verify result structure
+            assert "score" in result
+            assert "latencies" in result
+            assert "predictions" in result
+            assert "scores" in result
+            assert len(result["predictions"]) == 1
+
+
+def test_eval_model_with_base_url(test_mcp_server):
+    """Test eval_model with custom base_url."""
+    from unittest.mock import MagicMock, patch
+
+    from toolvaluator import ExampleBuilder, eval_model, get_tool_schemas_sync
+
+    tool_schemas = get_tool_schemas_sync(test_mcp_server)
+    builder = ExampleBuilder(tool_schemas)
+    builder.add_positive(
+        tool="calculate",
+        query="What is 2 * 3?",
+        arguments={"operation": "multiply", "a": 2, "b": 3},
+    )
+    dataset = builder.build()
+
+    with (
+        patch("toolvaluator.evaluation.dspy.LM") as MockLM,
+        patch("toolvaluator.evaluation.dspy.configure"),
+    ):
+        mock_lm = MagicMock()
+        MockLM.return_value = mock_lm
+
+        with patch("toolvaluator.core.dspy.Predict") as MockPredict:
+            mock_predict = MagicMock()
+            mock_result = MagicMock()
+            mock_result.should_call = True
+            mock_result.arguments_json = '{"operation": "multiply", "a": 2, "b": 3}'
+            mock_result.arguments = {"operation": "multiply", "a": 2, "b": 3}
+            mock_result.tool_name = "calculate"
+            mock_predict.return_value = mock_result
+            MockPredict.return_value = mock_predict
+
+            eval_model(
+                model_name="custom-model",
+                api_key="test-key",
+                base_url="http://localhost:8000",
+                dataset=dataset,
+            )
+
+            # Should add openai/ prefix when base_url is provided
+            MockLM.assert_called_once()
+            call_args = MockLM.call_args
+            assert "openai/custom-model" in str(call_args)
+
+
+def test_eval_model_with_system_prompt(test_mcp_server):
+    """Test eval_model respects system prompts at different levels."""
+    from unittest.mock import MagicMock, patch
+
+    from toolvaluator import ExampleBuilder, eval_model, get_tool_schemas_sync
+
+    tool_schemas = get_tool_schemas_sync(test_mcp_server)
+    builder = ExampleBuilder(tool_schemas)
+
+    # Example with its own system prompt
+    builder.add_positive(
+        tool="calculate",
+        query="Add 1 and 2",
+        arguments={"operation": "add", "a": 1, "b": 2},
+        system_prompt="Example-level prompt",
+    )
+
+    # Example without system prompt (will use eval-level)
+    builder.add_positive(
+        tool="calculate",
+        query="Add 3 and 4",
+        arguments={"operation": "add", "a": 3, "b": 4},
+    )
+
+    dataset = builder.build()
+
+    with (
+        patch("toolvaluator.evaluation.dspy.LM"),
+        patch("toolvaluator.evaluation.dspy.configure"),
+    ):
+        with patch("toolvaluator.core.dspy.Predict") as MockPredict:
+            mock_predict = MagicMock()
+            mock_result = MagicMock()
+            mock_result.should_call = True
+            mock_result.arguments_json = '{"operation": "add", "a": 1, "b": 2}'
+            mock_result.arguments = {"operation": "add", "a": 1, "b": 2}
+            mock_result.tool_name = "calculate"
+            mock_predict.return_value = mock_result
+            MockPredict.return_value = mock_predict
+
+            eval_model(
+                model_name="gpt-4o-mini",
+                api_key="test-key",
+                base_url=None,
+                dataset=dataset,
+                system_prompt="Eval-level prompt",
+            )
+
+            # Verify calls were made with system prompts
+            assert mock_predict.call_count == 2
+
+
+def test_eval_chained_model_basic(test_mcp_server):
+    """Test eval_chained_model with mocked DSPy LM."""
+    from unittest.mock import MagicMock, patch
+
+    from toolvaluator import (
+        ChainedExampleBuilder,
+        eval_chained_model,
+        get_tool_schemas_sync,
+    )
+
+    tool_schemas = get_tool_schemas_sync(test_mcp_server)
+    builder = ChainedExampleBuilder(tool_schemas, test_mcp_server)
+
+    builder.add_chain(mocks={"calculate": "15"}).add_step(
+        initial_query="Calculate 5 + 10",
+        expected_tool="calculate",
+        expected_arguments={"operation": "add", "a": 5, "b": 10},
+    )
+
+    dataset = builder.build()
+
+    with (
+        patch("toolvaluator.chained.dspy.LM") as MockLM,
+        patch("toolvaluator.chained.dspy.configure"),
+    ):
+        mock_lm = MagicMock()
+        MockLM.return_value = mock_lm
+
+        with patch("toolvaluator.core.dspy.Predict") as MockPredict:
+            mock_predict = MagicMock()
+            mock_result = MagicMock()
+            mock_result.should_call = True
+            mock_result.arguments_json = '{"operation": "add", "a": 5, "b": 10}'
+            mock_result.arguments = {"operation": "add", "a": 5, "b": 10}
+            mock_result.tool_name = "calculate"
+            mock_predict.return_value = mock_result
+            MockPredict.return_value = mock_predict
+
+            result = eval_chained_model(
+                model_name="gpt-4o-mini",
+                api_key="test-key",
+                dataset=dataset,
+            )
+
+            # Verify result structure
+            assert "score" in result
+            assert "chain_results" in result
+            assert "num_chains" in result
+            assert "num_steps" in result
+            assert result["num_chains"] == 1
+            assert result["num_steps"] == 1
+
+
+def test_eval_chained_model_empty_dataset():
+    """Test eval_chained_model raises error for empty dataset."""
+    import pytest
+
+    from toolvaluator import eval_chained_model
+
+    with pytest.raises(ValueError, match="Dataset is empty"):
+        eval_chained_model(
+            model_name="gpt-4o-mini",
+            api_key="test-key",
+            dataset=[],
+        )
+
+
+def test_eval_chained_model_with_system_prompt(test_mcp_server):
+    """Test eval_chained_model with system prompts."""
+    from unittest.mock import MagicMock, patch
+
+    from toolvaluator import (
+        ChainedExampleBuilder,
+        eval_chained_model,
+        get_tool_schemas_sync,
+    )
+
+    tool_schemas = get_tool_schemas_sync(test_mcp_server)
+    builder = ChainedExampleBuilder(tool_schemas, test_mcp_server)
+
+    builder.add_chain(mocks={"calculate": "10"}).add_step(
+        initial_query="Calculate 5 + 5",
+        expected_tool="calculate",
+        expected_arguments={"operation": "add", "a": 5, "b": 5},
+        system_prompt="Step-level prompt",
+    )
+
+    dataset = builder.build()
+
+    with (
+        patch("toolvaluator.chained.dspy.LM"),
+        patch("toolvaluator.chained.dspy.configure"),
+    ):
+        with patch("toolvaluator.core.dspy.Predict") as MockPredict:
+            mock_predict = MagicMock()
+            mock_result = MagicMock()
+            mock_result.should_call = True
+            mock_result.arguments_json = '{"operation": "add", "a": 5, "b": 5}'
+            mock_result.arguments = {"operation": "add", "a": 5, "b": 5}
+            mock_result.tool_name = "calculate"
+            mock_predict.return_value = mock_result
+            MockPredict.return_value = mock_predict
+
+            result = eval_chained_model(
+                model_name="gpt-4o-mini",
+                api_key="test-key",
+                dataset=dataset,
+                system_prompt="Eval-level prompt",
+            )
+
+            assert result["num_chains"] == 1
