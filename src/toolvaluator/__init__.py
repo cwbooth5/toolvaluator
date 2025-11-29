@@ -3,6 +3,17 @@ Toolvaluator: An MCP tool schema evaluation framework.
 
 This package provides utilities to evaluate how well language models
 use FastMCP tools by measuring correctness and latency.
+
+Module Structure:
+- core: DSPy signatures, utilities, and metrics
+- builders: ExampleBuilder and ChainedExampleBuilder classes
+- chained: ChainedEvaluator and eval_chained_model function
+- evaluation: eval_model function and build_dataset helper
+- evaluator: Re-exports all components (backwards compatibility)
+
+You can import from the package root or from specific modules:
+    from toolvaluator import eval_model  # Main package import
+    from toolvaluator.builders import ExampleBuilder  # Direct module import
 """
 
 __version__ = "1.0.0"
