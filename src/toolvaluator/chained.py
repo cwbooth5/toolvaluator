@@ -136,7 +136,10 @@ class ChainedEvaluator:
         Args:
             expected_tool: Name of tool that should be called in this step
             expected_arguments: Expected arguments (None for wildcards)
-            initial_query: For first step only - the user's initial query
+            initial_query: Optional query for this step. Required for first step.
+                          For subsequent steps, if provided, will be used as the
+                          query along with previous context. If not provided for
+                          subsequent steps, uses generic continuation message.
             mock_result: Optional mock result to use instead of executing tool
                         Overrides any global mock for this specific step
 
@@ -347,16 +350,27 @@ class ChainedEvaluator:
 
                 # Build query for next step using conversation history
                 if i + 1 < len(self.steps):
+                    next_step = self.steps[i + 1]
                     context_str = "\n".join(
                         [
                             f"Called {item['tool']}({item.get('args', '')}) → {item['result']}"
                             for item in conversation_context
                         ]
                     )
-                    current_query = (
-                        f"Previous context:\n{context_str}\n\n"
-                        f"Continue the task to accomplish the original goal."
-                    )
+
+                    # Check if next step has its own initial_query
+                    if next_step.get("initial_query"):
+                        # Use the step's query with context
+                        current_query = (
+                            f"Previous context:\n{context_str}\n\n"
+                            f"{next_step['initial_query']}"
+                        )
+                    else:
+                        # Use generic continuation message
+                        current_query = (
+                            f"Previous context:\n{context_str}\n\n"
+                            f"Continue the task to accomplish the original goal."
+                        )
 
         # Calculate overall score
         tool_scores = [1.0 if r["tool_correct"] else 0.0 for r in step_results]

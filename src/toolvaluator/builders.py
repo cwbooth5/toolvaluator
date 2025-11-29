@@ -232,7 +232,10 @@ class ChainedExampleBuilder:
         Args:
             expected_tool: Name of tool that should be called in this step
             expected_arguments: Expected arguments (None for wildcards)
-            initial_query: For first step only - the user's initial query
+            initial_query: Optional query for this step. Required for first step.
+                          For subsequent steps, if provided, will be used as the
+                          query along with previous context. If not provided for
+                          subsequent steps, uses generic continuation message.
             mock_result: Optional mock result to use instead of executing tool
             system_prompt: Optional system prompt for this step (overrides eval-level)
 
