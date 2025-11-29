@@ -150,6 +150,7 @@ class GenericToolCallerModule(dspy.Module):
         tool_name: str,
         tool_description: str,
         tool_schema: dict[str, Any],
+        system_prompt: str | None = None,
     ):
         """
         Make a prediction for whether and how to call a tool.
@@ -159,6 +160,7 @@ class GenericToolCallerModule(dspy.Module):
             tool_name: Name of the tool being evaluated
             tool_description: Description of what the tool does
             tool_schema: The tool's input parameter schema as a dict
+            system_prompt: Optional system prompt to prepend to the context
 
         Returns:
             A prediction object with should_call, arguments,
@@ -167,9 +169,14 @@ class GenericToolCallerModule(dspy.Module):
         # Tool schema comes in as a dict from FastMCP; we serialize for the LM
         schema_json = json.dumps(tool_schema, ensure_ascii=False)
 
+        # If system prompt is provided, prepend it to the user query
+        effective_query = user_query
+        if system_prompt:
+            effective_query = f"{system_prompt}\n\n{user_query}"
+
         t0 = time.perf_counter()
         pred = self.predict(
-            user_query=user_query,
+            user_query=effective_query,
             tool_name=tool_name,
             tool_description=tool_description,
             tool_schema_json=schema_json,
@@ -417,6 +424,7 @@ class ChainedEvaluator:
         api_key: str,
         base_url: str | None = None,
         mocks: dict[str, Any] | None = None,
+        system_prompt: str | None = None,
     ):
         """
         Initialize the chained evaluator.
@@ -430,6 +438,8 @@ class ChainedEvaluator:
             mocks: Optional dict of tool_name -> mock_result or callable
                    Use to avoid executing tools (reduces side effects)
                    Can be string result or callable(args) -> result
+            system_prompt: Optional default system prompt for all steps
+                          (can be overridden per-step)
         """
         self.tool_schemas = tool_schemas
         self.mcp_server = mcp_server
@@ -437,6 +447,7 @@ class ChainedEvaluator:
         self.api_key = api_key
         self.base_url = base_url
         self.mocks = mocks or {}
+        self.system_prompt = system_prompt
         self.steps: list[dict[str, Any]] = []
         self.execution_history: list[dict[str, Any]] = []
 
@@ -543,12 +554,21 @@ class ChainedEvaluator:
             )
             tool_schema = extract_input_schema(self.tool_schemas[expected_tool])
 
+            # Priority: step-level system_prompt > eval-level system_prompt > None
+            step_system_prompt = step.get("system_prompt")
+            effective_system_prompt = (
+                step_system_prompt
+                if step_system_prompt is not None
+                else self.system_prompt
+            )
+
             # Ask model what to do
             pred = tool_caller(
                 user_query=current_query,
                 tool_name=expected_tool,
                 tool_description=tool_description,
                 tool_schema=tool_schema,
+                system_prompt=effective_system_prompt,
             )
 
             # Check if model called expected tool
@@ -724,6 +744,7 @@ class ChainedExampleBuilder:
         expected_arguments: dict[str, Any] | None = None,
         initial_query: str | None = None,
         mock_result: str | None = None,
+        system_prompt: str | None = None,
     ) -> "ChainedExampleBuilder":
         """
         Add a step to the current chain.
@@ -733,6 +754,7 @@ class ChainedExampleBuilder:
             expected_arguments: Expected arguments (None for wildcards)
             initial_query: For first step only - the user's initial query
             mock_result: Optional mock result to use instead of executing tool
+            system_prompt: Optional system prompt for this step (overrides eval-level)
 
         Returns:
             Self for method chaining
@@ -752,6 +774,7 @@ class ChainedExampleBuilder:
                 "expected_arguments": expected_arguments or {},
                 "initial_query": initial_query,
                 "mock_result": mock_result,
+                "system_prompt": system_prompt,
             }
         )
         return self
@@ -777,6 +800,7 @@ def eval_chained_model(
     dataset: list[dict[str, Any]],
     base_url: str | None = None,
     verbose: bool = False,
+    system_prompt: str | None = None,
 ) -> dict[str, Any]:
     """
     Evaluate chained tool calls following the same pattern as eval_model().
@@ -790,6 +814,8 @@ def eval_chained_model(
         dataset: List of chain configurations from ChainedExampleBuilder.build()
         base_url: Optional base URL for OpenAI-compatible endpoints
         verbose: If True, print detailed debug information for each step
+        system_prompt: Optional default system prompt for all steps
+                      (can be overridden per-step)
 
     Returns:
         Dict with:
@@ -827,7 +853,9 @@ def eval_chained_model(
         )
     """
     if not dataset:
-        raise ValueError("Dataset is empty. Use ChainedExampleBuilder to create chains.")
+        raise ValueError(
+            "Dataset is empty. Use ChainedExampleBuilder to create chains."
+        )
 
     print(f"\nEvaluating {len(dataset)} chain(s)...")
 
@@ -848,6 +876,7 @@ def eval_chained_model(
             api_key=api_key,
             base_url=base_url,
             mocks=chain_config.get("mocks", {}),
+            system_prompt=system_prompt,
         )
 
         # Add steps
@@ -869,7 +898,7 @@ def eval_chained_model(
     overall_score = sum(all_scores) / len(all_scores) if all_scores else 0.0
 
     print(f"\n{'=' * 70}")
-    print(f"Overall Results")
+    print("Overall Results")
     print(f"{'=' * 70}")
     print(f"Chains evaluated: {len(dataset)}")
     print(f"Total steps: {total_steps}")
@@ -925,6 +954,7 @@ class ExampleBuilder:
         query: str,
         should_call: bool = True,
         arguments: dict[str, Any] | None = None,
+        system_prompt: str | None = None,
     ) -> "ExampleBuilder":
         """
         Add an evaluation example with minimal boilerplate.
@@ -934,6 +964,7 @@ class ExampleBuilder:
             query: User's natural language query
             should_call: Whether the tool should be called for this query
             arguments: Expected arguments (None for "don't care", {} for "no args")
+            system_prompt: Optional system prompt for this example (overrides eval-level)
 
         Returns:
             Self for method chaining
@@ -964,28 +995,39 @@ class ExampleBuilder:
             expected_should_call=should_call,
             expected_tool_name=expected_tool_name,
             expected_arguments=expected_arguments,
+            system_prompt=system_prompt,
         ).with_inputs("user_query", "tool_name", "tool_description", "tool_schema")
 
         self.examples.append(example)
         return self
 
     def add_positive(
-        self, tool: str, query: str, arguments: dict[str, Any] | None = None
+        self,
+        tool: str,
+        query: str,
+        arguments: dict[str, Any] | None = None,
+        system_prompt: str | None = None,
     ) -> "ExampleBuilder":
         """
         Add a positive example (tool should be called).
 
         Convenience method equivalent to add(tool, query, should_call=True, arguments).
         """
-        return self.add(tool, query, should_call=True, arguments=arguments)
+        return self.add(
+            tool, query, should_call=True, arguments=arguments, system_prompt=system_prompt
+        )
 
-    def add_negative(self, tool: str, query: str) -> "ExampleBuilder":
+    def add_negative(
+        self, tool: str, query: str, system_prompt: str | None = None
+    ) -> "ExampleBuilder":
         """
         Add a negative example (tool should NOT be called).
 
         Convenience method equivalent to add(tool, query, should_call=False).
         """
-        return self.add(tool, query, should_call=False, arguments={})
+        return self.add(
+            tool, query, should_call=False, arguments={}, system_prompt=system_prompt
+        )
 
     def build(self) -> list[dspy.Example]:
         """
@@ -1087,6 +1129,7 @@ def eval_model(
     base_url: str | None,
     dataset: list[dspy.Example],
     verbose: bool = False,
+    system_prompt: str | None = None,
 ) -> dict[str, Any]:
     """
     Configure DSPy with the given model, run the evaluation, and
@@ -1098,6 +1141,8 @@ def eval_model(
         base_url: Optional base URL for OpenAI-compatible endpoints
         dataset: List of examples to evaluate on
         verbose: If True, print detailed debug information for each example
+        system_prompt: Optional default system prompt for all examples
+                      (can be overridden per-example)
 
     Returns:
         Dict with 'score', 'latencies', 'predictions', and 'scores' keys
@@ -1134,11 +1179,18 @@ def eval_model(
 
     print("\nEvaluating...")
     for i, example in enumerate(dataset, 1):
+        # Priority: example-level system_prompt > eval-level system_prompt > None
+        example_system_prompt = getattr(example, "system_prompt", None)
+        effective_system_prompt = (
+            example_system_prompt if example_system_prompt is not None else system_prompt
+        )
+
         pred = tool_caller(
             user_query=example.user_query,
             tool_name=example.tool_name,
             tool_description=example.tool_description,
             tool_schema=example.tool_schema,
+            system_prompt=effective_system_prompt,
         )
         predictions.append(pred)
 

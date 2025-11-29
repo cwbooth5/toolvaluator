@@ -468,6 +468,81 @@ The evaluator provides the model with full tool context to prevent hallucination
 
 This prevents the model from hallucinating tool names or misunderstanding tool purposes. Each evaluation asks: "Given this specific tool and this query, should the tool be called and with what arguments?"
 
+### System Prompts (Optional)
+
+By default, evaluations do not use system prompts. However, you can optionally provide system prompts at two levels with a priority system:
+
+**Priority:** Example/Step-level > Eval-level > None (default)
+
+**Regular Evaluation:**
+
+```python
+# Build dataset with optional per-example system prompts
+builder = ExampleBuilder(tool_schemas)
+
+# Example 1: No system prompt (will use eval-level if provided)
+builder.add_positive(
+    tool="calculate",
+    query="What is 5 + 10?",
+    arguments={"operation": "add", "a": 5, "b": 10}
+)
+
+# Example 2: Custom system prompt (overrides eval-level)
+builder.add_positive(
+    tool="search_docs",
+    query="Find our vacation policy",
+    arguments={"query": "vacation"},
+    system_prompt="You are a helpful HR assistant."  # Example-level
+)
+
+dataset = builder.build()
+
+# Evaluate with optional default system prompt
+result = eval_model(
+    model_name="gpt-4o-mini",
+    api_key="your-key",
+    base_url=None,
+    dataset=dataset,
+    system_prompt="You are a helpful assistant."  # Eval-level (optional)
+)
+```
+
+**Chained Evaluation:**
+
+```python
+# Build chained dataset with optional per-step system prompts
+builder = ChainedExampleBuilder(tool_schemas, mcp)
+
+builder.add_chain(
+    mocks={}
+).add_step(
+    initial_query="Calculate 5 * 10",
+    expected_tool="calculate",
+    expected_arguments={"operation": "multiply", "a": 5, "b": 10},
+    system_prompt="You are a math expert."  # Step-level (optional)
+)
+
+dataset = builder.build()
+
+# Evaluate with optional default system prompt
+result = eval_chained_model(
+    model_name="gpt-4o-mini",
+    api_key="your-key",
+    dataset=dataset,
+    system_prompt="You are a helpful assistant."  # Eval-level (optional)
+)
+```
+
+**How it works:**
+- If an example/step has its own `system_prompt`, that is used
+- Otherwise, if the eval function has a `system_prompt`, that is used
+- Otherwise, no system prompt is used (default behavior)
+
+**Use cases:**
+- Test how system prompts affect tool-calling behavior
+- Compare model performance with different system prompts
+- Provide role-specific context for specific examples
+
 ### Chained Tool Calls (Advanced)
 
 **WARNING: This feature actually executes tools on your MCP server!**
