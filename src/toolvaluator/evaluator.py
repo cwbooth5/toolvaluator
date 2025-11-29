@@ -643,6 +643,246 @@ class ChainedEvaluator:
         }
 
 
+class ChainedExampleBuilder:
+    """
+    Helper to build chained evaluation examples using a consistent API pattern.
+
+    This provides the same workflow as ExampleBuilder but for multi-step chains:
+    1. Create builder
+    2. Add chain(s) with steps
+    3. Build dataset
+    4. Pass dataset and model config to eval_chained_model()
+
+    Usage:
+        builder = ChainedExampleBuilder(tool_schemas, mcp_server)
+
+        # Add a chain (sequence of tool calls)
+        builder.add_chain(
+            mocks={"calculate": lambda args: str(args["a"] * args["b"])}
+        ).add_step(
+            initial_query="Calculate 5 * 10, then add 25",
+            expected_tool="calculate",
+            expected_arguments={"operation": "multiply", "a": 5, "b": 10}
+        ).add_step(
+            expected_tool="calculate",
+            expected_arguments={"operation": "add", "a": None, "b": 25}
+        )
+
+        # Build dataset
+        dataset = builder.build()
+
+        # Evaluate with different models (model config in eval function!)
+        result = eval_chained_model(
+            model_name="gpt-4o-mini",
+            api_key="your-key",
+            dataset=dataset
+        )
+    """
+
+    def __init__(self, tool_schemas: dict[str, Any], mcp_server):
+        """
+        Initialize the chained example builder.
+
+        Args:
+            tool_schemas: Dict mapping tool names to their definitions
+            mcp_server: FastMCP server instance (for executing tools)
+        """
+        self.tool_schemas = tool_schemas
+        self.mcp_server = mcp_server
+        self.chains: list[dict[str, Any]] = []
+        self._current_chain: dict[str, Any] | None = None
+
+    def add_chain(
+        self,
+        mocks: dict[str, Any] | None = None,
+    ) -> "ChainedExampleBuilder":
+        """
+        Start a new chain with its configuration.
+
+        Args:
+            mocks: Optional dict of tool_name -> mock_result or callable
+
+        Returns:
+            Self for method chaining
+        """
+        # Save previous chain if exists
+        if self._current_chain and self._current_chain.get("steps"):
+            self.chains.append(self._current_chain)
+
+        # Start new chain
+        self._current_chain = {
+            "tool_schemas": self.tool_schemas,
+            "mcp_server": self.mcp_server,
+            "mocks": mocks or {},
+            "steps": [],
+        }
+        return self
+
+    def add_step(
+        self,
+        expected_tool: str,
+        expected_arguments: dict[str, Any] | None = None,
+        initial_query: str | None = None,
+        mock_result: str | None = None,
+    ) -> "ChainedExampleBuilder":
+        """
+        Add a step to the current chain.
+
+        Args:
+            expected_tool: Name of tool that should be called in this step
+            expected_arguments: Expected arguments (None for wildcards)
+            initial_query: For first step only - the user's initial query
+            mock_result: Optional mock result to use instead of executing tool
+
+        Returns:
+            Self for method chaining
+        """
+        if self._current_chain is None:
+            raise ValueError("Must call add_chain() before add_step()")
+
+        if expected_tool not in self.tool_schemas:
+            raise ValueError(
+                f"Tool '{expected_tool}' not found in tool_schemas. "
+                f"Available: {', '.join(self.tool_schemas.keys())}"
+            )
+
+        self._current_chain["steps"].append(
+            {
+                "expected_tool": expected_tool,
+                "expected_arguments": expected_arguments or {},
+                "initial_query": initial_query,
+                "mock_result": mock_result,
+            }
+        )
+        return self
+
+    def build(self) -> list[dict[str, Any]]:
+        """
+        Build and return the list of chained examples.
+
+        Returns:
+            List of chain configurations ready for eval_chained_model()
+        """
+        # Save current chain if exists
+        if self._current_chain and self._current_chain.get("steps"):
+            self.chains.append(self._current_chain)
+            self._current_chain = None
+
+        return self.chains
+
+
+def eval_chained_model(
+    model_name: str,
+    api_key: str,
+    dataset: list[dict[str, Any]],
+    base_url: str | None = None,
+    verbose: bool = False,
+) -> dict[str, Any]:
+    """
+    Evaluate chained tool calls following the same pattern as eval_model().
+
+    This function takes a dataset of chained examples and evaluates them,
+    providing the same workflow as eval_model() but for multi-step chains.
+
+    Args:
+        model_name: Name of the model to evaluate
+        api_key: API key for the model
+        dataset: List of chain configurations from ChainedExampleBuilder.build()
+        base_url: Optional base URL for OpenAI-compatible endpoints
+        verbose: If True, print detailed debug information for each step
+
+    Returns:
+        Dict with:
+            - score: Overall score across all chains (0-1)
+            - chain_results: List of results for each chain
+            - num_chains: Total number of chains evaluated
+            - num_steps: Total number of steps across all chains
+
+    Usage:
+        builder = ChainedExampleBuilder(tool_schemas, mcp_server)
+        builder.add_chain(
+            mocks={"calculate": lambda args: str(args["a"] * args["b"])}
+        ).add_step(
+            initial_query="Calculate 5 * 10",
+            expected_tool="calculate",
+            expected_arguments={"operation": "multiply", "a": 5, "b": 10}
+        ).add_step(
+            expected_tool="calculate",
+            expected_arguments={"operation": "add", "a": None, "b": 25}
+        )
+
+        dataset = builder.build()
+
+        # Test with different models
+        result1 = eval_chained_model(
+            model_name="gpt-4o-mini",
+            api_key="key",
+            dataset=dataset
+        )
+
+        result2 = eval_chained_model(
+            model_name="claude-3-sonnet",
+            api_key="key",
+            dataset=dataset
+        )
+    """
+    if not dataset:
+        raise ValueError("Dataset is empty. Use ChainedExampleBuilder to create chains.")
+
+    print(f"\nEvaluating {len(dataset)} chain(s)...")
+
+    all_chain_results = []
+    all_scores = []
+    total_steps = 0
+
+    for chain_idx, chain_config in enumerate(dataset, 1):
+        print(f"\n{'=' * 70}")
+        print(f"Chain {chain_idx}/{len(dataset)}")
+        print(f"{'=' * 70}")
+
+        # Create evaluator for this chain
+        chain = ChainedEvaluator(
+            tool_schemas=chain_config["tool_schemas"],
+            mcp_server=chain_config["mcp_server"],
+            model_name=model_name,
+            api_key=api_key,
+            base_url=base_url,
+            mocks=chain_config.get("mocks", {}),
+        )
+
+        # Add steps
+        for step in chain_config["steps"]:
+            chain.add_step(
+                expected_tool=step["expected_tool"],
+                expected_arguments=step["expected_arguments"],
+                initial_query=step.get("initial_query"),
+                mock_result=step.get("mock_result"),
+            )
+
+        # Evaluate chain
+        result = chain.evaluate()
+        all_chain_results.append(result)
+        all_scores.append(result["score"])
+        total_steps += result["num_steps"]
+
+    # Calculate overall statistics
+    overall_score = sum(all_scores) / len(all_scores) if all_scores else 0.0
+
+    print(f"\n{'=' * 70}")
+    print(f"Overall Results")
+    print(f"{'=' * 70}")
+    print(f"Chains evaluated: {len(dataset)}")
+    print(f"Total steps: {total_steps}")
+    print(f"Overall score: {overall_score:.3f}")
+
+    return {
+        "score": overall_score,
+        "chain_results": all_chain_results,
+        "num_chains": len(dataset),
+        "num_steps": total_steps,
+    }
+
+
 class ExampleBuilder:
     """
     Helper class to reduce boilerplate when creating evaluation examples.

@@ -9,10 +9,12 @@ __version__ = "1.0.0"
 
 from .evaluator import (
     ChainedEvaluator,
+    ChainedExampleBuilder,
     ExampleBuilder,
     GenericToolCallerModule,
     build_dataset,
     compare_arguments,
+    eval_chained_model,
     eval_model,
     extract_input_schema,
     extract_tool_description,
@@ -23,10 +25,12 @@ from .evaluator import (
 __all__ = [
     "__version__",
     "ChainedEvaluator",
+    "ChainedExampleBuilder",
     "ExampleBuilder",
     "GenericToolCallerModule",
     "build_dataset",
     "compare_arguments",
+    "eval_chained_model",
     "eval_model",
     "extract_input_schema",
     "extract_tool_description",

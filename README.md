@@ -472,69 +472,112 @@ This prevents the model from hallucinating tool names or misunderstanding tool p
 
 **WARNING: This feature actually executes tools on your MCP server!**
 
-For testing multi-step workflows where one tool's output feeds into the next, use `ChainedEvaluator`:
+For testing multi-step workflows where one tool's output feeds into the next, use the same pattern as regular evaluation:
+
+**Step 1: Build Dataset**
 
 ```python
-from toolvaluator import ChainedEvaluator, get_tool_schemas_sync
+from toolvaluator import ChainedExampleBuilder, eval_chained_model, get_tool_schemas_sync
 from my_server import mcp
 
 tool_schemas = get_tool_schemas_sync(mcp)
 
-# Create chained evaluator
-chain = ChainedEvaluator(
-    tool_schemas=tool_schemas,
-    mcp_server=mcp,
-    model_name="gpt-4o-mini",
-    api_key="your-api-key"
-)
+# Build chained test dataset (same pattern as ExampleBuilder!)
+builder = ChainedExampleBuilder(tool_schemas, mcp)
 
-# Define the chain - tools will be executed in sequence!
-chain.add_step(
+# Add a chain (sequence of tool calls)
+builder.add_chain(
+    mocks={}  # Optional: mock tools to avoid side effects
+).add_step(
     initial_query="Calculate 15 * 23, then divide the result by 5",
     expected_tool="calculate",
     expected_arguments={"operation": "multiply", "a": 15, "b": 23}
-)
-
-chain.add_step(
+).add_step(
     expected_tool="calculate",
     expected_arguments={"operation": "divide", "a": None, "b": 5}  # 'a' comes from step 1
 )
 
-# Execute and evaluate
-result = chain.evaluate()
+# Build dataset
+dataset = builder.build()
+```
+
+**Step 2: Evaluate with Model**
+
+```python
+# Evaluate with model config (same pattern as eval_model!)
+result = eval_chained_model(
+    model_name="gpt-4o-mini",
+    api_key="your-api-key",
+    dataset=dataset,
+    verbose=True
+)
 
 print(f"Overall score: {result['score']:.2f}")
 print(f"Steps completed: {result['num_steps']}")
-for step in result['step_results']:
-    print(f"  Step {step['step']}: {step['predicted_tool']} → {step['tool_result']}")
+for chain in result['chain_results']:
+    for step in chain['step_results']:
+        print(f"  Step {step['step']}: {step['predicted_tool']} → {step['tool_result']}")
+```
+
+**Test Same Dataset with Multiple Models:**
+
+```python
+# Test with GPT-4o-mini
+result1 = eval_chained_model(
+    model_name="gpt-4o-mini",
+    api_key="openai-key",
+    dataset=dataset
+)
+
+# Test with Claude (same dataset!)
+result2 = eval_chained_model(
+    model_name="claude-3-sonnet",
+    api_key="anthropic-key",
+    dataset=dataset
+)
+
+# Test with local model
+result3 = eval_chained_model(
+    model_name="local-model",
+    api_key="lm-studio",
+    base_url="http://localhost:1234/v1",
+    dataset=dataset
+)
+
+print(f"GPT-4o-mini score: {result1['score']:.2f}")
+print(f"Claude score: {result2['score']:.2f}")
+print(f"Local model score: {result3['score']:.2f}")
 ```
 
 **Using Mocks to Avoid Side Effects:**
 
-To test chains without actually executing tools, use mocks:
+Mocks go in the dataset (test configuration), not the eval function (model configuration):
 
 ```python
-# Global mocks - apply to all uses of a tool
-chain = ChainedEvaluator(
-    tool_schemas=tool_schemas,
-    mcp_server=mcp,
-    model_name="gpt-4o-mini",
-    api_key="your-api-key",
+# Add mocks when building the dataset
+builder.add_chain(
     mocks={
         "calculate": lambda args: str(args["a"] + args["b"]),  # Callable mock
         "search_docs": "Here are the relevant documents...",   # Static mock
     }
-)
-
-# Per-step mocks - override for specific steps
-chain.add_step(
+).add_step(
     initial_query="Calculate 5 + 10",
     expected_tool="calculate",
-    expected_arguments={"operation": "add", "a": 5, "b": 10},
-    mock_result="15"  # Override global mock for this step only
+    expected_arguments={"operation": "add", "a": 5, "b": 10}
+).add_step(
+    expected_tool="search_docs",
+    expected_arguments={"query": None},
+    mock_result="Custom result for this step"  # Per-step override
 )
 
-result = chain.evaluate()  # No tools executed!
+dataset = builder.build()
+
+# Evaluate - no tools executed because of mocks!
+result = eval_chained_model(
+    model_name="gpt-4o-mini",
+    api_key="your-key",
+    dataset=dataset
+)
 ```
 
 **Mock Priority:**
@@ -546,6 +589,59 @@ result = chain.evaluate()  # No tools executed!
 - **Static string**: `mocks={"tool": "result"}` - Always returns "result"
 - **Callable**: `mocks={"tool": lambda args: ...}` - Computes result from arguments
 - **Per-step override**: `add_step(..., mock_result="...")` - Overrides global mock
+
+**Multiple Chains:**
+
+You can add multiple chains to the same dataset:
+
+```python
+builder = ChainedExampleBuilder(tool_schemas, mcp)
+
+# Chain 1: Calculate workflow
+builder.add_chain(
+    mocks={"calculate": lambda args: str(args["a"] * args["b"])}
+).add_step(
+    initial_query="Calculate 5 * 10, then add 25",
+    expected_tool="calculate",
+    expected_arguments={"operation": "multiply", "a": 5, "b": 10}
+).add_step(
+    expected_tool="calculate",
+    expected_arguments={"operation": "add", "a": None, "b": 25}
+)
+
+# Chain 2: Weather workflow
+builder.add_chain(
+    mocks={"get_weather": "72°F, sunny"}
+).add_step(
+    initial_query="Get weather for San Francisco",
+    expected_tool="get_weather",
+    expected_arguments={"location": "San Francisco", "units": None}
+)
+
+# Evaluate all chains with one call
+dataset = builder.build()
+result = eval_chained_model(
+    model_name="gpt-4o-mini",
+    api_key="your-key",
+    dataset=dataset
+)
+
+print(f"Evaluated {result['num_chains']} chains")
+print(f"Overall score: {result['score']:.2f}")
+```
+
+**API Consistency:**
+
+The chained evaluation API follows the exact same pattern as regular evaluation:
+
+| Step | Regular Evaluation | Chained Evaluation |
+|------|-------------------|-------------------|
+| 1. Build dataset | `ExampleBuilder(...)` | `ChainedExampleBuilder(...)` |
+| 2. Add tests | `.add_positive(...)` | `.add_chain().add_step(...)` |
+| 3. Create dataset | `.build()` | `.build()` |
+| 4. Evaluate | `eval_model(model, key, dataset)` | `eval_chained_model(model, key, dataset)` |
+
+**Key Principle:** Dataset = what to test, Eval function = which model to test with
 
 **How it works:**
 1. Model receives initial query
